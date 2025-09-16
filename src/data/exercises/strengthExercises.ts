@@ -1,0 +1,70 @@
+import { Exercise } from './cardioExercises';
+
+export const strengthExercises: Exercise[] = [
+  {
+    id: 'bodyweight-squats',
+    name: 'Bodyweight Squats',
+    category: 'strength',
+    difficulty: 'beginner',
+    duration: 15,
+    caloriesBurned: 180,
+    description: 'A fundamental lower body exercise that builds leg and glute strength.',
+    instructions: [
+      'Stand with feet shoulder-width apart',
+      'Lower your body by bending knees and hips',
+      'Keep chest up and knees aligned with toes',
+      'Return to starting position by pushing through heels',
+    ],
+    benefits: [
+      'Strengthens quadriceps, hamstrings, and glutes',
+      'Improves functional movement',
+      'Builds core stability',
+      'No equipment needed',
+    ],
+    precautions: ['Avoid knee valgus (knees caving in)', 'Don\'t round your back', 'Start with partial range if needed'],
+  },
+  {
+    id: 'push-ups',
+    name: 'Push-ups',
+    category: 'strength',
+    difficulty: 'intermediate',
+    duration: 10,
+    caloriesBurned: 120,
+    description: 'Upper body exercise targeting chest, shoulders, and triceps.',
+    instructions: [
+      'Start in plank position with hands under shoulders',
+      'Lower body until chest nearly touches ground',
+      'Keep body in straight line from head to heels',
+      'Push back up to starting position',
+    ],
+    benefits: [
+      'Builds upper body strength',
+      'Improves core stability',
+      'Enhances functional pushing power',
+      'Can be modified for all levels',
+    ],
+    precautions: ['Maintain proper form', 'Modify on knees if needed', 'Don\'t let hips sag'],
+  },
+  {
+    id: 'planks',
+    name: 'Planks',
+    category: 'strength',
+    difficulty: 'beginner',
+    duration: 5,
+    caloriesBurned: 60,
+    description: 'Isometric core exercise that builds stability and endurance.',
+    instructions: [
+      'Start in forearm plank position',
+      'Keep body in straight line from head to heels',
+      'Engage core muscles and breathe normally',
+      'Hold position for specified time',
+    ],
+    benefits: [
+      'Strengthens entire core',
+      'Improves posture',
+      'Builds stability',
+      'Reduces back pain risk',
+    ],
+    precautions: ['Don\'t hold breath', 'Keep hips level', 'Stop if lower back hurts'],
+  },
+];
