@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, ActivityIndicator, Text } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import DatabaseInitializer from "@/database/DatabaseInitializer";
-import AppNavigator from "@/navigation/AppNavigator";
+import MainApp from "@/components/MainApp";
 import ErrorHandler, { ErrorType, ErrorSeverity } from "@/utils/error/ErrorHandler";
 import DemoSetupService from "@/services/demo/DemoSetupService";
 
@@ -110,7 +110,7 @@ export default function RootLayout() {
           </Text>
         </View>
       )}
-      <AppNavigator />
+      <MainApp />
     </View>
   );
 }

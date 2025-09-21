@@ -15,7 +15,7 @@ class DatabaseService {
   private db: SQLite.SQLiteDatabase | null = null;
   private readonly config: DatabaseConfig = {
     name: 'health_app.db',
-    version: 1,
+    version: 3,
   };
 
   private migrations: Migration[] = [
@@ -109,6 +109,95 @@ class DatabaseService {
         'DROP TABLE IF EXISTS user_profile',
         'DROP TABLE IF EXISTS app_settings',
         'DROP TABLE IF EXISTS database_version',
+      ],
+    },
+    {
+      version: 2,
+      up: [
+        // Create users table
+        `CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          email TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          name TEXT NOT NULL,
+          is_verified BOOLEAN DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          last_login TEXT
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+        `CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)`,
+
+        // Add user_id to existing tables
+        `ALTER TABLE weight_readings ADD COLUMN user_id TEXT REFERENCES users(id)`,
+        `ALTER TABLE blood_sugar_readings ADD COLUMN user_id TEXT REFERENCES users(id)`,
+        `ALTER TABLE blood_pressure_readings ADD COLUMN user_id TEXT REFERENCES users(id)`,
+        `ALTER TABLE activity_sessions ADD COLUMN user_id TEXT REFERENCES users(id)`,
+        `ALTER TABLE user_profile ADD COLUMN user_id TEXT REFERENCES users(id)`,
+
+        // Create indexes for user_id columns
+        `CREATE INDEX IF NOT EXISTS idx_weight_user_id ON weight_readings(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_blood_sugar_user_id ON blood_sugar_readings(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_blood_pressure_user_id ON blood_pressure_readings(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_activity_user_id ON activity_sessions(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_user_profile_user_id ON user_profile(user_id)`,
+      ],
+      down: [
+        'DROP INDEX IF EXISTS idx_weight_user_id',
+        'DROP INDEX IF EXISTS idx_blood_sugar_user_id',
+        'DROP INDEX IF EXISTS idx_blood_pressure_user_id',
+        'DROP INDEX IF EXISTS idx_activity_user_id',
+        'DROP INDEX IF EXISTS idx_user_profile_user_id',
+        'DROP TABLE IF EXISTS users',
+      ],
+    },
+    {
+      version: 3,
+      up: [
+        // Meals and Hydration tables
+        `CREATE TABLE IF NOT EXISTS meals (
+          id TEXT PRIMARY KEY,
+          user_id TEXT REFERENCES users(id),
+          date TEXT NOT NULL,
+          name TEXT NOT NULL,
+          total_calories REAL,
+          total_carbs REAL,
+          total_protein REAL,
+          total_fat REAL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_meals_user_date ON meals(user_id, date)`,
+
+        `CREATE TABLE IF NOT EXISTS meal_items (
+          id TEXT PRIMARY KEY,
+          meal_id TEXT REFERENCES meals(id),
+          food_name TEXT NOT NULL,
+          brand_name TEXT,
+          serving_qty REAL,
+          serving_unit TEXT,
+          calories REAL,
+          carbs REAL,
+          protein REAL,
+          fat REAL
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_meal_items_meal_id ON meal_items(meal_id)`,
+
+        `CREATE TABLE IF NOT EXISTS hydration_logs (
+          id TEXT PRIMARY KEY,
+          user_id TEXT REFERENCES users(id),
+          date TEXT NOT NULL,
+          amount_ml REAL NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_hydration_user_date ON hydration_logs(user_id, date)`,
+      ],
+      down: [
+        'DROP INDEX IF EXISTS idx_meals_user_date',
+        'DROP INDEX IF EXISTS idx_meal_items_meal_id',
+        'DROP INDEX IF EXISTS idx_hydration_user_date',
+        'DROP TABLE IF EXISTS meal_items',
+        'DROP TABLE IF EXISTS meals',
+        'DROP TABLE IF EXISTS hydration_logs',
       ],
     },
   ];

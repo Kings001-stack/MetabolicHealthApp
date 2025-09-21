@@ -3,6 +3,7 @@ import { WeightReading } from '../../services/tracking/WeightService';
 
 export interface WeightReadingDB {
   id: string;
+  user_id: string;
   weight: number;
   unit: 'kg' | 'lbs';
   body_fat?: number;
@@ -16,17 +17,18 @@ export interface WeightReadingDB {
 class WeightRepository {
   private tableName = 'weight_readings';
 
-  async create(reading: Omit<WeightReading, 'id'>): Promise<WeightReading> {
+  async create(reading: Omit<WeightReading, 'id'>, userId: string): Promise<WeightReading> {
     const id = Date.now().toString();
     const timestamp = reading.timestamp.toISOString();
     const now = new Date().toISOString();
 
     await DatabaseService.executeUpdate(
       `INSERT INTO ${this.tableName} 
-       (id, weight, unit, body_fat, muscle_mass, timestamp, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, user_id, weight, unit, body_fat, muscle_mass, timestamp, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
+        userId,
         reading.weight,
         reading.unit,
         reading.bodyFat || null,

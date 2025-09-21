@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,18 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Card from '@/components/common/Card';
 import Button from '@/components/common/Button';
+import AuthenticationService from '@/services/auth/AuthenticationService';
+import DatabaseService from '@/database/DatabaseService';
+import { User } from '@/database/repositories/UserRepository';
+import BloodPressureChart from '@/components/charts/BloodPressureChart';
+import BloodSugarChart from '@/components/charts/BloodSugarChart';
+import WeightChart from '@/components/charts/WeightChart';
 
 const { width } = Dimensions.get('window');
 
@@ -21,65 +29,282 @@ interface LogEntry {
   notes?: string;
 }
 
+interface HealthReading {
+  id: string;
+  user_id: string;
+  value: number;
+  systolic?: number;
+  diastolic?: number;
+  pulse?: number;
+  notes?: string;
+  timestamp: string;
+  created_at: string;
+}
+
+interface UserStats {
+  totalReadings: number;
+  weeklyReadings: number;
+  averageBloodSugar?: number;
+  averageBloodPressure?: { systolic: number; diastolic: number };
+  currentWeight?: number;
+  weightChange?: number;
+}
+
 const LogScreen: React.FC = () => {
   const navigation = useNavigation();
   const [selectedPeriod, setSelectedPeriod] = useState<'today' | 'week' | 'month'>('today');
-  const [recentLogs] = useState<LogEntry[]>([
-    {
-      id: '1',
-      type: 'bloodSugar',
-      value: '120 mg/dL',
-      timestamp: new Date(),
-      notes: 'Before breakfast',
-    },
-    {
-      id: '2',
-      type: 'weight',
-      value: '70.5 kg',
-      timestamp: new Date(Date.now() - 86400000), // Yesterday
-    },
-    {
-      id: '3',
-      type: 'bloodPressure',
-      value: '118/78 mmHg',
-      timestamp: new Date(Date.now() - 172800000), // 2 days ago
-    },
-  ]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
+  const [bloodSugarData, setBloodSugarData] = useState<HealthReading[]>([]);
+  const [bloodPressureData, setBloodPressureData] = useState<HealthReading[]>([]);
+  const [weightData, setWeightData] = useState<HealthReading[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const trackingOptions = [
-    {
-      id: 'bloodSugar',
-      title: 'Blood Sugar',
-      icon: '🩸',
-      color: '#FF5722',
-      lastValue: '120 mg/dL',
-      trend: 'stable',
-    },
-    {
-      id: 'bloodPressure',
-      title: 'Blood Pressure',
-      icon: '❤️',
-      color: '#E91E63',
-      lastValue: '118/78',
-      trend: 'good',
-    },
-    {
-      id: 'weight',
-      title: 'Weight',
-      icon: '⚖️',
-      color: '#2196F3',
-      lastValue: '70.5 kg',
-      trend: 'down',
-    },
-    {
-      id: 'medication',
-      title: 'Medications',
-      icon: '💊',
-      color: '#9C27B0',
-      lastValue: '2/3 taken',
-      trend: 'reminder',
-    },
-  ];
+  useEffect(() => {
+    loadUserDataAndLogs();
+  }, [selectedPeriod]);
+
+  const loadUserDataAndLogs = async () => {
+    try {
+      const user = await AuthenticationService.getCurrentUser();
+      setCurrentUser(user);
+
+      if (user) {
+        await Promise.all([
+          loadRecentLogs(user.id),
+          loadUserStats(user.id),
+          loadChartData(user.id),
+        ]);
+      }
+    } catch (error) {
+      console.error('Failed to load user data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadRecentLogs = async (userId: string) => {
+    try {
+      const periodDays = selectedPeriod === 'today' ? 1 : selectedPeriod === 'week' ? 7 : 30;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - periodDays);
+
+      // Load blood sugar readings
+      const bloodSugarReadings = await DatabaseService.executeQuery<HealthReading>(
+        `SELECT id, user_id, value, notes, timestamp, created_at, 'bloodSugar' as type 
+         FROM blood_sugar_readings 
+         WHERE user_id = ? AND timestamp >= ? 
+         ORDER BY timestamp DESC LIMIT 10`,
+        [userId, cutoffDate.toISOString()]
+      );
+
+      // Load blood pressure readings
+      const bloodPressureReadings = await DatabaseService.executeQuery<HealthReading>(
+        `SELECT id, user_id, systolic, diastolic, pulse, notes, timestamp, created_at, 'bloodPressure' as type 
+         FROM blood_pressure_readings 
+         WHERE user_id = ? AND timestamp >= ? 
+         ORDER BY timestamp DESC LIMIT 10`,
+        [userId, cutoffDate.toISOString()]
+      );
+
+      // Load weight readings
+      const weightReadings = await DatabaseService.executeQuery<HealthReading>(
+        `SELECT id, user_id, value, notes, timestamp, created_at, 'weight' as type 
+         FROM weight_readings 
+         WHERE user_id = ? AND timestamp >= ? 
+         ORDER BY timestamp DESC LIMIT 10`,
+        [userId, cutoffDate.toISOString()]
+      );
+
+      // Combine and format all readings
+      const allLogs: LogEntry[] = [
+        ...bloodSugarReadings.map(reading => ({
+          id: reading.id,
+          type: 'bloodSugar' as const,
+          value: `${reading.value} mg/dL`,
+          timestamp: new Date(reading.timestamp),
+          notes: reading.notes,
+        })),
+        ...bloodPressureReadings.map(reading => ({
+          id: reading.id,
+          type: 'bloodPressure' as const,
+          value: `${reading.systolic}/${reading.diastolic} mmHg`,
+          timestamp: new Date(reading.timestamp),
+          notes: reading.notes,
+        })),
+        ...weightReadings.map(reading => ({
+          id: reading.id,
+          type: 'weight' as const,
+          value: `${reading.value} kg`,
+          timestamp: new Date(reading.timestamp),
+          notes: reading.notes,
+        })),
+      ];
+
+      // Sort by timestamp (most recent first)
+      allLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      setRecentLogs(allLogs.slice(0, 10));
+    } catch (error) {
+      console.error('Failed to load recent logs:', error);
+    }
+  };
+
+  const loadUserStats = async (userId: string) => {
+    try {
+      const periodDays = selectedPeriod === 'today' ? 1 : selectedPeriod === 'week' ? 7 : 30;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - periodDays);
+
+      // Get total readings count
+      const totalReadingsResult = await DatabaseService.executeQueryFirst<{count: number}>(
+        `SELECT 
+          (SELECT COUNT(*) FROM blood_sugar_readings WHERE user_id = ?) +
+          (SELECT COUNT(*) FROM blood_pressure_readings WHERE user_id = ?) +
+          (SELECT COUNT(*) FROM weight_readings WHERE user_id = ?) as count`,
+        [userId, userId, userId]
+      );
+
+      // Get weekly readings count
+      const weeklyReadingsResult = await DatabaseService.executeQueryFirst<{count: number}>(
+        `SELECT 
+          (SELECT COUNT(*) FROM blood_sugar_readings WHERE user_id = ? AND timestamp >= ?) +
+          (SELECT COUNT(*) FROM blood_pressure_readings WHERE user_id = ? AND timestamp >= ?) +
+          (SELECT COUNT(*) FROM weight_readings WHERE user_id = ? AND timestamp >= ?) as count`,
+        [userId, cutoffDate.toISOString(), userId, cutoffDate.toISOString(), userId, cutoffDate.toISOString()]
+      );
+
+      // Get average blood sugar
+      const avgBloodSugar = await DatabaseService.executeQueryFirst<{avg: number}>(
+        `SELECT AVG(value) as avg FROM blood_sugar_readings 
+         WHERE user_id = ? AND timestamp >= ?`,
+        [userId, cutoffDate.toISOString()]
+      );
+
+      // Get average blood pressure
+      const avgBloodPressure = await DatabaseService.executeQueryFirst<{avg_systolic: number, avg_diastolic: number}>(
+        `SELECT AVG(systolic) as avg_systolic, AVG(diastolic) as avg_diastolic 
+         FROM blood_pressure_readings 
+         WHERE user_id = ? AND timestamp >= ?`,
+        [userId, cutoffDate.toISOString()]
+      );
+
+      // Get current weight and weight change
+      const currentWeight = await DatabaseService.executeQueryFirst<{value: number}>(
+        `SELECT value FROM weight_readings 
+         WHERE user_id = ? 
+         ORDER BY timestamp DESC LIMIT 1`,
+        [userId]
+      );
+
+      const previousWeight = await DatabaseService.executeQueryFirst<{value: number}>(
+        `SELECT value FROM weight_readings 
+         WHERE user_id = ? AND timestamp < ? 
+         ORDER BY timestamp DESC LIMIT 1`,
+        [userId, cutoffDate.toISOString()]
+      );
+
+      setUserStats({
+        totalReadings: totalReadingsResult?.count || 0,
+        weeklyReadings: weeklyReadingsResult?.count || 0,
+        averageBloodSugar: avgBloodSugar?.avg || undefined,
+        averageBloodPressure: avgBloodPressure?.avg_systolic ? {
+          systolic: Math.round(avgBloodPressure.avg_systolic),
+          diastolic: Math.round(avgBloodPressure.avg_diastolic)
+        } : undefined,
+        currentWeight: currentWeight?.value || undefined,
+        weightChange: (currentWeight?.value && previousWeight?.value) ? 
+          currentWeight.value - previousWeight.value : undefined,
+      });
+    } catch (error) {
+      console.error('Failed to load user stats:', error);
+    }
+  };
+
+  const loadChartData = async (userId: string) => {
+    try {
+      const periodDays = selectedPeriod === 'today' ? 1 : selectedPeriod === 'week' ? 7 : 30;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - periodDays);
+
+      // Load chart data for the selected period
+      const [bloodSugar, bloodPressure, weight] = await Promise.all([
+        DatabaseService.executeQuery<HealthReading>(
+          `SELECT * FROM blood_sugar_readings 
+           WHERE user_id = ? AND timestamp >= ? 
+           ORDER BY timestamp ASC`,
+          [userId, cutoffDate.toISOString()]
+        ),
+        DatabaseService.executeQuery<HealthReading>(
+          `SELECT * FROM blood_pressure_readings 
+           WHERE user_id = ? AND timestamp >= ? 
+           ORDER BY timestamp ASC`,
+          [userId, cutoffDate.toISOString()]
+        ),
+        DatabaseService.executeQuery<HealthReading>(
+          `SELECT * FROM weight_readings 
+           WHERE user_id = ? AND timestamp >= ? 
+           ORDER BY timestamp ASC`,
+          [userId, cutoffDate.toISOString()]
+        ),
+      ]);
+
+      setBloodSugarData(bloodSugar);
+      setBloodPressureData(bloodPressure);
+      setWeightData(weight);
+    } catch (error) {
+      console.error('Failed to load chart data:', error);
+    }
+  };
+
+  const getTrackingOptions = () => {
+    const latestBloodSugar = bloodSugarData[bloodSugarData.length - 1];
+    const latestBloodPressure = bloodPressureData[bloodPressureData.length - 1];
+    const latestWeight = weightData[weightData.length - 1];
+
+    return [
+      {
+        id: 'bloodSugar',
+        title: 'Blood Sugar',
+        icon: '🩸',
+        color: '#FF5722',
+        lastValue: latestBloodSugar ? `${latestBloodSugar.value} mg/dL` : 'No data',
+        trend: userStats?.averageBloodSugar ? 
+          (userStats.averageBloodSugar > 140 ? 'high' : userStats.averageBloodSugar < 70 ? 'low' : 'stable') : 'stable',
+        count: bloodSugarData.length,
+      },
+      {
+        id: 'bloodPressure',
+        title: 'Blood Pressure',
+        icon: '❤️',
+        color: '#E91E63',
+        lastValue: latestBloodPressure ? 
+          `${latestBloodPressure.systolic}/${latestBloodPressure.diastolic}` : 'No data',
+        trend: userStats?.averageBloodPressure ? 
+          (userStats.averageBloodPressure.systolic > 140 ? 'high' : 'good') : 'good',
+        count: bloodPressureData.length,
+      },
+      {
+        id: 'weight',
+        title: 'Weight',
+        icon: '⚖️',
+        color: '#2196F3',
+        lastValue: latestWeight ? `${latestWeight.value} kg` : 'No data',
+        trend: userStats?.weightChange ? 
+          (userStats.weightChange > 0 ? 'up' : userStats.weightChange < 0 ? 'down' : 'stable') : 'stable',
+        count: weightData.length,
+      },
+      {
+        id: 'medication',
+        title: 'Medications',
+        icon: '💊',
+        color: '#9C27B0',
+        lastValue: 'Track meds',
+        trend: 'reminder',
+        count: 0,
+      },
+    ];
+  };
 
   const handleQuickLog = (type: string) => {
     if (type === 'bloodSugar') {
@@ -154,12 +379,54 @@ const LogScreen: React.FC = () => {
     }
   };
 
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4CAF50" />
+        <Text style={styles.loadingText}>Loading your health data...</Text>
+      </View>
+    );
+  }
+
+  const trackingOptions = getTrackingOptions();
+
+  // Map selected period to chart period tokens
+  const chartPeriod: '7d' | '30d' | '90d' = selectedPeriod === 'month' ? '30d' : '7d';
+
+  // Normalize data for chart components (convert timestamp to Date, map fields)
+  const bloodSugarChartData = bloodSugarData.map((r) => ({
+    id: r.id,
+    value: Number(r.value),
+    // Fallback type since DB may not store context; can be enhanced later
+    type: 'pre-meal' as const,
+    timestamp: new Date(r.timestamp),
+  }));
+
+  const bloodPressureChartData = bloodPressureData
+    .filter((r) => r.systolic !== undefined && r.diastolic !== undefined)
+    .map((r) => ({
+      id: r.id,
+      systolic: Number(r.systolic),
+      diastolic: Number(r.diastolic),
+      pulse: r.pulse !== undefined ? Number(r.pulse) : undefined,
+      timestamp: new Date(r.timestamp),
+    }));
+
+  const weightChartData = weightData.map((r) => ({
+    id: r.id,
+    weight: Number(r.value),
+    unit: 'kg' as const,
+    timestamp: new Date(r.timestamp),
+  }));
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Health Tracking</Text>
-        <Text style={styles.subtitle}>Monitor your daily health metrics</Text>
+        <Text style={styles.subtitle}>
+          {currentUser ? `Welcome back, ${currentUser.name}` : 'Monitor your daily health metrics'}
+        </Text>
       </View>
 
       {/* Period Selector */}
@@ -185,6 +452,71 @@ const LogScreen: React.FC = () => {
         ))}
       </View>
 
+      {/* Health Stats Overview */}
+      {userStats && (
+        <Card style={styles.statsCard}>
+          <Text style={styles.sectionTitle}>Health Overview</Text>
+          <View style={styles.statsGrid}>
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>{userStats.totalReadings}</Text>
+              <Text style={styles.statLabel}>Total Readings</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>{userStats.weeklyReadings}</Text>
+              <Text style={styles.statLabel}>This {selectedPeriod}</Text>
+            </View>
+            {userStats.averageBloodSugar && (
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{Math.round(userStats.averageBloodSugar)}</Text>
+                <Text style={styles.statLabel}>Avg Blood Sugar</Text>
+              </View>
+            )}
+            {userStats.currentWeight && (
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{userStats.currentWeight}</Text>
+                <Text style={styles.statLabel}>Current Weight</Text>
+              </View>
+            )}
+          </View>
+        </Card>
+      )}
+
+      {/* Charts Section */}
+      <Card style={styles.chartsCard}>
+        <Text style={styles.sectionTitle}>Health Trends</Text>
+        
+        {bloodSugarChartData.length > 0 && (
+          <View style={styles.chartContainer}>
+            <Text style={styles.chartTitle}>Blood Sugar Levels</Text>
+            <BloodSugarChart data={bloodSugarChartData} period={chartPeriod} />
+          </View>
+        )}
+
+        {bloodPressureChartData.length > 0 && (
+          <View style={styles.chartContainer}>
+            <Text style={styles.chartTitle}>Blood Pressure</Text>
+            <BloodPressureChart data={bloodPressureChartData} period={chartPeriod} />
+          </View>
+        )}
+
+        {weightChartData.length > 0 && (
+          <View style={styles.chartContainer}>
+            <Text style={styles.chartTitle}>Weight Tracking</Text>
+            <WeightChart data={weightChartData} period={chartPeriod} />
+          </View>
+        )}
+
+        {bloodSugarChartData.length === 0 && bloodPressureChartData.length === 0 && weightChartData.length === 0 && (
+          <View style={styles.noDataContainer}>
+            <Text style={styles.noDataIcon}>📊</Text>
+            <Text style={styles.noDataTitle}>No Data Available</Text>
+            <Text style={styles.noDataText}>
+              Start logging your health metrics to see trends and insights
+            </Text>
+          </View>
+        )}
+      </Card>
+
       {/* Quick Log Actions */}
       <Card style={styles.quickLogCard}>
         <Text style={styles.sectionTitle}>Quick Log</Text>
@@ -201,6 +533,7 @@ const LogScreen: React.FC = () => {
               </View>
               <Text style={styles.trackingTitle}>{option.title}</Text>
               <Text style={styles.trackingValue}>{option.lastValue}</Text>
+              <Text style={styles.trackingCount}>{option.count} readings</Text>
               <Button
                 title="Log Now"
                 onPress={() => handleQuickLog(option.id)}
@@ -318,6 +651,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAFAFA',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FAFAFA',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#666666',
+    marginTop: 12,
+  },
   header: {
     paddingHorizontal: 20,
     paddingTop: 60,
@@ -332,6 +676,71 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666666',
     marginTop: 4,
+  },
+  statsCard: {
+    marginHorizontal: 20,
+    marginBottom: 16,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  statItem: {
+    width: '48%',
+    alignItems: 'center',
+    paddingVertical: 12,
+    backgroundColor: '#F9F9F9',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#666666',
+    marginTop: 4,
+  },
+  chartsCard: {
+    marginHorizontal: 20,
+    marginBottom: 16,
+  },
+  chartContainer: {
+    marginBottom: 24,
+  },
+  chartTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333333',
+    marginBottom: 12,
+  },
+  noDataContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  noDataIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  noDataTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333333',
+    marginBottom: 8,
+  },
+  noDataText: {
+    fontSize: 14,
+    color: '#666666',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  trackingCount: {
+    fontSize: 10,
+    color: '#999999',
+    marginBottom: 8,
   },
   periodSelector: {
     flexDirection: 'row',

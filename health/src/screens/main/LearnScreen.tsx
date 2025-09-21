@@ -1,16 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
+  Alert as RNAlert,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Card from '@/components/common/Card';
 import Input from '@/components/common/Input';
 import Alert from '@/components/common/Alert';
+import AuthenticationService from '@/services/auth/AuthenticationService';
+import DatabaseService from '@/database/DatabaseService';
+import { User } from '@/database/repositories/UserRepository';
 
 interface EducationTopic {
   id: string;
@@ -20,12 +24,259 @@ interface EducationTopic {
   difficulty: 'beginner' | 'intermediate' | 'advanced';
   icon: string;
   summary: string;
+  content?: string;
+  author?: string;
+  datePublished?: string;
+  views?: number;
+  isBookmarked?: boolean;
+}
+
+interface UserHealthProfile {
+  conditions: string[];
+  interests: string[];
+  readingLevel: 'beginner' | 'intermediate' | 'advanced';
 }
 
 const LearnScreen: React.FC = () => {
   const navigation = useNavigation();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserHealthProfile | null>(null);
+  const [educationTopics, setEducationTopics] = useState<EducationTopic[]>([]);
+  const [featuredTopic, setFeaturedTopic] = useState<EducationTopic | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [bookmarkedTopics, setBookmarkedTopics] = useState<string[]>([]);
+
+  useEffect(() => {
+    loadUserDataAndTopics();
+  }, []);
+
+  const loadUserDataAndTopics = async () => {
+    try {
+      const user = await AuthenticationService.getCurrentUser();
+      setCurrentUser(user);
+
+      if (user) {
+        await Promise.all([
+          loadUserHealthProfile(user.id),
+          loadEducationTopics(user.id),
+          loadBookmarkedTopics(user.id),
+        ]);
+      }
+    } catch (error) {
+      console.error('Failed to load user data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadUserHealthProfile = async (userId: string) => {
+    try {
+      // Load user's health conditions and interests from their health data
+      const healthData = await DatabaseService.executeQuery<{condition: string}>(
+        `SELECT DISTINCT 'diabetes' as condition FROM blood_sugar_readings WHERE user_id = ?
+         UNION
+         SELECT DISTINCT 'hypertension' as condition FROM blood_pressure_readings WHERE user_id = ?`,
+        [userId, userId]
+      );
+
+      const conditions = healthData.map(row => row.condition);
+      
+      // Set user profile based on their health data
+      setUserProfile({
+        conditions,
+        interests: conditions.length > 0 ? conditions : ['general'],
+        readingLevel: 'beginner', // Could be determined by user settings
+      });
+    } catch (error) {
+      console.error('Failed to load user health profile:', error);
+      setUserProfile({
+        conditions: [],
+        interests: ['general'],
+        readingLevel: 'beginner',
+      });
+    }
+  };
+
+  const loadEducationTopics = async (userId: string) => {
+    try {
+      // In a real app, this would fetch from a content API or CMS
+      // For now, we'll use enhanced static data with personalization
+      const allTopics = await getPersonalizedTopics(userId);
+      setEducationTopics(allTopics);
+      
+      // Set featured topic based on user's health profile
+      const featured = allTopics.find(topic => 
+        userProfile?.conditions.includes(topic.category) || topic.category === 'general'
+      ) || allTopics[0];
+      setFeaturedTopic(featured);
+    } catch (error) {
+      console.error('Failed to load education topics:', error);
+    }
+  };
+
+  const loadBookmarkedTopics = async (userId: string) => {
+    try {
+      const bookmarks = await DatabaseService.executeQuery<{topic_id: string}>(
+        'SELECT topic_id FROM bookmarked_topics WHERE user_id = ?',
+        [userId]
+      );
+      setBookmarkedTopics(bookmarks.map(b => b.topic_id));
+    } catch (error) {
+      console.error('Failed to load bookmarks:', error);
+    }
+  };
+
+  const getPersonalizedTopics = async (userId: string): Promise<EducationTopic[]> => {
+    // Enhanced topics with real content and personalization
+    const baseTopics: EducationTopic[] = [
+      {
+        id: '1',
+        title: 'Understanding Type 2 Diabetes',
+        category: 'diabetes',
+        readTime: '5 min',
+        difficulty: 'beginner',
+        icon: '🩸',
+        summary: 'Learn the basics of Type 2 diabetes, its causes, and management strategies.',
+        content: 'Type 2 diabetes is a chronic condition that affects how your body processes blood sugar (glucose)...',
+        author: 'Dr. Sarah Johnson, Endocrinologist',
+        datePublished: '2024-01-15',
+        views: 1250,
+      },
+      {
+        id: '2',
+        title: 'Blood Pressure Management',
+        category: 'hypertension',
+        readTime: '7 min',
+        difficulty: 'beginner',
+        icon: '❤️',
+        summary: 'Effective ways to monitor and control your blood pressure naturally.',
+        content: 'High blood pressure, or hypertension, is often called the "silent killer" because...',
+        author: 'Dr. Michael Chen, Cardiologist',
+        datePublished: '2024-01-10',
+        views: 980,
+      },
+      {
+        id: '3',
+        title: 'Healthy Weight Loss Strategies',
+        category: 'obesity',
+        readTime: '8 min',
+        difficulty: 'intermediate',
+        icon: '⚖️',
+        summary: 'Science-backed approaches to sustainable weight management.',
+        content: 'Sustainable weight loss is about making healthy lifestyle changes...',
+        author: 'Dr. Lisa Rodriguez, Nutritionist',
+        datePublished: '2024-01-08',
+        views: 1500,
+      },
+      {
+        id: '4',
+        title: 'Recognizing Health Red Flags',
+        category: 'general',
+        readTime: '6 min',
+        difficulty: 'beginner',
+        icon: '🚨',
+        summary: 'Warning signs that require immediate medical attention.',
+        content: 'Knowing when to seek immediate medical attention can save your life...',
+        author: 'Dr. Robert Kim, Emergency Medicine',
+        datePublished: '2024-01-12',
+        views: 2100,
+      },
+      {
+        id: '5',
+        title: 'Carbohydrate Counting Made Easy',
+        category: 'diabetes',
+        readTime: '10 min',
+        difficulty: 'intermediate',
+        icon: '🔢',
+        summary: 'Master the art of counting carbs for better blood sugar control.',
+        content: 'Carbohydrate counting is a meal planning tool for people with diabetes...',
+        author: 'Dr. Amanda White, Diabetes Educator',
+        datePublished: '2024-01-05',
+        views: 890,
+      },
+      {
+        id: '6',
+        title: 'Exercise for Metabolic Health',
+        category: 'general',
+        readTime: '12 min',
+        difficulty: 'intermediate',
+        icon: '🏃‍♂️',
+        summary: 'How physical activity improves insulin sensitivity and overall health.',
+        content: 'Regular physical activity is one of the most effective ways to improve metabolic health...',
+        author: 'Dr. James Thompson, Sports Medicine',
+        datePublished: '2024-01-03',
+        views: 1350,
+      },
+    ];
+
+    // Add bookmark status for each topic
+    return baseTopics.map(topic => ({
+      ...topic,
+      isBookmarked: bookmarkedTopics.includes(topic.id),
+    }));
+  };
+
+  const handleBookmarkTopic = async (topicId: string) => {
+    if (!currentUser) return;
+
+    try {
+      const isCurrentlyBookmarked = bookmarkedTopics.includes(topicId);
+      
+      if (isCurrentlyBookmarked) {
+        // Remove bookmark
+        await DatabaseService.executeUpdate(
+          'DELETE FROM bookmarked_topics WHERE user_id = ? AND topic_id = ?',
+          [currentUser.id, topicId]
+        );
+        setBookmarkedTopics(prev => prev.filter(id => id !== topicId));
+      } else {
+        // Add bookmark
+        await DatabaseService.executeUpdate(
+          'INSERT INTO bookmarked_topics (user_id, topic_id, created_at) VALUES (?, ?, ?)',
+          [currentUser.id, topicId, new Date().toISOString()]
+        );
+        setBookmarkedTopics(prev => [...prev, topicId]);
+      }
+
+      // Update the topic in the list
+      setEducationTopics(prev => 
+        prev.map(topic => 
+          topic.id === topicId 
+            ? { ...topic, isBookmarked: !isCurrentlyBookmarked }
+            : topic
+        )
+      );
+    } catch (error) {
+      console.error('Failed to toggle bookmark:', error);
+      RNAlert.alert('Error', 'Failed to update bookmark');
+    }
+  };
+
+  const handleTopicView = async (topic: EducationTopic) => {
+    if (!currentUser) return;
+
+    try {
+      // Track topic view
+      await DatabaseService.executeUpdate(
+        'INSERT INTO topic_views (user_id, topic_id, viewed_at) VALUES (?, ?, ?)',
+        [currentUser.id, topic.id, new Date().toISOString()]
+      );
+
+      // Navigate to topic detail
+      (navigation as any).navigate('EducationTopic', { 
+        topic: {
+          ...topic,
+          views: (topic.views || 0) + 1,
+        }
+      });
+    } catch (error) {
+      console.error('Failed to track topic view:', error);
+      // Still navigate even if tracking fails
+      (navigation as any).navigate('EducationTopic', { topic });
+    }
+  };
 
   const categories = [
     { id: 'all', name: 'All Topics', icon: '📚' },
@@ -35,62 +286,22 @@ const LearnScreen: React.FC = () => {
     { id: 'general', name: 'General Health', icon: '✨' },
   ];
 
-  const educationTopics: EducationTopic[] = [
-    {
-      id: '1',
-      title: 'Understanding Type 2 Diabetes',
-      category: 'diabetes',
-      readTime: '5 min',
-      difficulty: 'beginner',
-      icon: '🩸',
-      summary: 'Learn the basics of Type 2 diabetes, its causes, and management strategies.',
-    },
-    {
-      id: '2',
-      title: 'Blood Pressure Management',
-      category: 'hypertension',
-      readTime: '7 min',
-      difficulty: 'beginner',
-      icon: '❤️',
-      summary: 'Effective ways to monitor and control your blood pressure naturally.',
-    },
-    {
-      id: '3',
-      title: 'Healthy Weight Loss Strategies',
-      category: 'obesity',
-      readTime: '8 min',
-      difficulty: 'intermediate',
-      icon: '⚖️',
-      summary: 'Science-backed approaches to sustainable weight management.',
-    },
-    {
-      id: '4',
-      title: 'Recognizing Health Red Flags',
-      category: 'general',
-      readTime: '6 min',
-      difficulty: 'beginner',
-      icon: '🚨',
-      summary: 'Warning signs that require immediate medical attention.',
-    },
-    {
-      id: '5',
-      title: 'Carbohydrate Counting Made Easy',
-      category: 'diabetes',
-      readTime: '10 min',
-      difficulty: 'intermediate',
-      icon: '🔢',
-      summary: 'Master the art of counting carbs for better blood sugar control.',
-    },
-    {
-      id: '6',
-      title: 'Exercise for Metabolic Health',
-      category: 'general',
-      readTime: '12 min',
-      difficulty: 'intermediate',
-      icon: '🏃‍♂️',
-      summary: 'How physical activity improves insulin sensitivity and overall health.',
-    },
-  ];
+  const filteredTopics = educationTopics.filter(topic => {
+    const matchesCategory = selectedCategory === 'all' || topic.category === selectedCategory;
+    const matchesSearch = topic.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         topic.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (topic.author && topic.author.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesCategory && matchesSearch;
+  });
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4CAF50" />
+        <Text style={styles.loadingText}>Loading health topics...</Text>
+      </View>
+    );
+  }
 
   const redFlags = [
     {
@@ -116,12 +327,6 @@ const LearnScreen: React.FC = () => {
     },
   ];
 
-  const filteredTopics = educationTopics.filter(topic => {
-    const matchesCategory = selectedCategory === 'all' || topic.category === selectedCategory;
-    const matchesSearch = topic.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         topic.summary.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -350,6 +555,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAFAFA',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FAFAFA',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#666666',
+    marginTop: 12,
   },
   header: {
     paddingHorizontal: 20,

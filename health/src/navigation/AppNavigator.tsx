@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import AuthenticationService from "../services/auth/AuthenticationService";
 
 // Onboarding Screens
 import SplashScreen from "@/screens/onboarding/SplashScreen";
@@ -35,6 +36,14 @@ const AppNavigator: React.FC = () => {
 
   const checkOnboardingStatus = async () => {
     try {
+      // Check if user is authenticated - if so, skip onboarding
+      const isAuthenticated = await AuthenticationService.isAuthenticated();
+      if (isAuthenticated) {
+        setHasCompletedOnboarding(true);
+        setIsLoading(false);
+        return;
+      }
+
       const hasLaunched = await AsyncStorage.getItem("hasLaunched");
       const onboardingComplete =
         await AsyncStorage.getItem("onboardingComplete");

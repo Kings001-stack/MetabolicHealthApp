@@ -1,6 +1,6 @@
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '@/types';
-import React, { useState } from 'react';
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import type { RootStackParamList } from "@/types";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,14 +9,19 @@ import {
   TouchableOpacity,
   Switch,
   Alert,
-} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation } from '@react-navigation/native';
-import Card from '@/components/common/Card';
-import Button from '@/components/common/Button';
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useNavigation } from "@react-navigation/native";
+import Card from "@/components/common/Card";
+import Button from "@/components/common/Button";
+import AuthenticationService from "@/services/auth/AuthenticationService";
+import { User } from "@/database/repositories/UserRepository";
 
 const MoreScreen: React.FC = () => {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userStats, setUserStats] = useState<any>(null);
   const [notifications, setNotifications] = useState({
     bloodSugar: true,
     medication: true,
@@ -24,41 +29,86 @@ const MoreScreen: React.FC = () => {
     meals: true,
   });
 
+  useEffect(() => {
+    loadUserData();
+  }, []);
+
+  const loadUserData = async () => {
+    try {
+      const user = await AuthenticationService.getCurrentUser();
+      const stats = await AuthenticationService.getUserStatistics();
+      setCurrentUser(user);
+      setUserStats(stats);
+    } catch (error) {
+      console.error('Failed to load user data:', error);
+    }
+  };
+
   const handleNotificationToggle = (type: keyof typeof notifications) => {
-    setNotifications(prev => ({
+    setNotifications((prev) => ({
       ...prev,
       [type]: !prev[type],
     }));
   };
 
   const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', style: 'destructive', onPress: () => console.log('Logout') },
-      ]
-    );
+    Alert.alert("Logout", "Are you sure you want to logout?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Logout",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await AuthenticationService.logout();
+            // The app will automatically redirect to login screen
+          } catch (error) {
+            console.error('Logout failed:', error);
+            Alert.alert('Error', 'Failed to logout. Please try again.');
+          }
+        },
+      },
+    ]);
   };
 
   const handleDeleteAccount = async () => {
     Alert.alert(
-      'Delete Account',
-      'This action cannot be undone. All your health data will be permanently deleted.',
+      "Delete Account",
+      "This action cannot be undone. All your health data will be permanently deleted.",
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Delete',
-          style: 'destructive',
+          text: "Delete",
+          style: "destructive",
           onPress: async () => {
-            // Clear all user data and onboarding flags
-            await AsyncStorage.clear();
-            // Reset navigation to onboarding
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'OnboardingSlides' }],
-            });
+            try {
+              // Prompt for password confirmation
+              Alert.prompt(
+                "Confirm Password",
+                "Please enter your password to confirm account deletion:",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Delete Account",
+                    style: "destructive",
+                    onPress: async (password) => {
+                      if (password) {
+                        const result = await AuthenticationService.deleteAccount(password);
+                        if (result.success) {
+                          Alert.alert("Account Deleted", "Your account has been permanently deleted.");
+                          // The app will automatically redirect to login screen
+                        } else {
+                          Alert.alert("Error", result.error || "Failed to delete account");
+                        }
+                      }
+                    },
+                  },
+                ],
+                "secure-text"
+              );
+            } catch (error) {
+              console.error('Delete account failed:', error);
+              Alert.alert('Error', 'Failed to delete account. Please try again.');
+            }
           },
         },
       ]
@@ -77,12 +127,25 @@ const MoreScreen: React.FC = () => {
       <Card style={styles.profileCard}>
         <TouchableOpacity style={styles.profileSection}>
           <View style={styles.profileAvatar}>
-            <Text style={styles.profileAvatarText}>JD</Text>
+            <Text style={styles.profileAvatarText}>
+              {currentUser?.name ? currentUser.name.split(' ').map(n => n[0]).join('').toUpperCase() : 'U'}
+            </Text>
           </View>
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>John Doe</Text>
-            <Text style={styles.profileEmail}>john.doe@email.com</Text>
-            <Text style={styles.profileStatus}>Premium Member</Text>
+            <Text style={styles.profileName}>
+              {currentUser?.name || 'Loading...'}
+            </Text>
+            <Text style={styles.profileEmail}>
+              {currentUser?.email || 'Loading...'}
+            </Text>
+            <Text style={styles.profileStatus}>
+              {currentUser?.is_verified ? 'Verified Member' : 'Unverified Member'}
+            </Text>
+            {userStats && (
+              <Text style={styles.profileStats}>
+                {userStats.statistics.weight_readings + userStats.statistics.blood_sugar_readings + userStats.statistics.blood_pressure_readings + userStats.statistics.activity_sessions} health readings
+              </Text>
+            )}
           </View>
           <Text style={styles.profileArrow}>›</Text>
         </TouchableOpacity>
@@ -94,7 +157,9 @@ const MoreScreen: React.FC = () => {
           <Text style={styles.premiumIcon}>⭐</Text>
           <View style={styles.premiumContent}>
             <Text style={styles.premiumTitle}>Upgrade to Premium</Text>
-            <Text style={styles.premiumSubtitle}>Unlock advanced features and remove ads</Text>
+            <Text style={styles.premiumSubtitle}>
+              Unlock advanced features and remove ads
+            </Text>
           </View>
         </View>
         <View style={styles.premiumFeatures}>
@@ -105,7 +170,7 @@ const MoreScreen: React.FC = () => {
         </View>
         <Button
           title="Upgrade Now - $4.99/month"
-          onPress={() => console.log('Navigate to premium')}
+          onPress={() => console.log("Navigate to premium")}
           variant="primary"
           size="medium"
           style={styles.premiumButton}
@@ -115,7 +180,7 @@ const MoreScreen: React.FC = () => {
       {/* Health Management */}
       <Card style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Health Management</Text>
-        
+
         <TouchableOpacity style={styles.menuItem}>
           <Text style={styles.menuIcon}>📊</Text>
           <View style={styles.menuContent}>
@@ -156,16 +221,18 @@ const MoreScreen: React.FC = () => {
       {/* Reminders & Notifications */}
       <Card style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Reminders & Notifications</Text>
-        
+
         <View style={styles.notificationItem}>
           <View style={styles.notificationContent}>
             <Text style={styles.notificationTitle}>Blood Sugar Reminders</Text>
-            <Text style={styles.notificationSubtitle}>Daily logging reminders</Text>
+            <Text style={styles.notificationSubtitle}>
+              Daily logging reminders
+            </Text>
           </View>
           <Switch
             value={notifications.bloodSugar}
-            onValueChange={() => handleNotificationToggle('bloodSugar')}
-            trackColor={{ false: '#E0E0E0', true: '#4CAF50' }}
+            onValueChange={() => handleNotificationToggle("bloodSugar")}
+            trackColor={{ false: "#E0E0E0", true: "#4CAF50" }}
             thumbColor="#FFFFFF"
           />
         </View>
@@ -173,12 +240,14 @@ const MoreScreen: React.FC = () => {
         <View style={styles.notificationItem}>
           <View style={styles.notificationContent}>
             <Text style={styles.notificationTitle}>Medication Reminders</Text>
-            <Text style={styles.notificationSubtitle}>Never miss your medications</Text>
+            <Text style={styles.notificationSubtitle}>
+              Never miss your medications
+            </Text>
           </View>
           <Switch
             value={notifications.medication}
-            onValueChange={() => handleNotificationToggle('medication')}
-            trackColor={{ false: '#E0E0E0', true: '#4CAF50' }}
+            onValueChange={() => handleNotificationToggle("medication")}
+            trackColor={{ false: "#E0E0E0", true: "#4CAF50" }}
             thumbColor="#FFFFFF"
           />
         </View>
@@ -190,8 +259,8 @@ const MoreScreen: React.FC = () => {
           </View>
           <Switch
             value={notifications.exercise}
-            onValueChange={() => handleNotificationToggle('exercise')}
-            trackColor={{ false: '#E0E0E0', true: '#4CAF50' }}
+            onValueChange={() => handleNotificationToggle("exercise")}
+            trackColor={{ false: "#E0E0E0", true: "#4CAF50" }}
             thumbColor="#FFFFFF"
           />
         </View>
@@ -199,12 +268,14 @@ const MoreScreen: React.FC = () => {
         <View style={styles.notificationItem}>
           <View style={styles.notificationContent}>
             <Text style={styles.notificationTitle}>Meal Reminders</Text>
-            <Text style={styles.notificationSubtitle}>Track your nutrition</Text>
+            <Text style={styles.notificationSubtitle}>
+              Track your nutrition
+            </Text>
           </View>
           <Switch
             value={notifications.meals}
-            onValueChange={() => handleNotificationToggle('meals')}
-            trackColor={{ false: '#E0E0E0', true: '#4CAF50' }}
+            onValueChange={() => handleNotificationToggle("meals")}
+            trackColor={{ false: "#E0E0E0", true: "#4CAF50" }}
             thumbColor="#FFFFFF"
           />
         </View>
@@ -222,7 +293,7 @@ const MoreScreen: React.FC = () => {
       {/* App Settings */}
       <Card style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>App Settings</Text>
-        
+
         <TouchableOpacity style={styles.menuItem}>
           <Text style={styles.menuIcon}>🌙</Text>
           <View style={styles.menuContent}>
@@ -232,7 +303,7 @@ const MoreScreen: React.FC = () => {
           <Switch
             value={false}
             disabled={true}
-            trackColor={{ false: '#E0E0E0', true: '#4CAF50' }}
+            trackColor={{ false: "#E0E0E0", true: "#4CAF50" }}
             thumbColor="#CCCCCC"
           />
         </TouchableOpacity>
@@ -268,7 +339,7 @@ const MoreScreen: React.FC = () => {
       {/* Support & Feedback */}
       <Card style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Support & Feedback</Text>
-        
+
         <TouchableOpacity style={styles.menuItem}>
           <Text style={styles.menuIcon}>❓</Text>
           <View style={styles.menuContent}>
@@ -309,7 +380,7 @@ const MoreScreen: React.FC = () => {
       {/* About */}
       <Card style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>About</Text>
-        
+
         <TouchableOpacity style={styles.menuItem}>
           <Text style={styles.menuIcon}>📄</Text>
           <View style={styles.menuContent}>
@@ -340,7 +411,7 @@ const MoreScreen: React.FC = () => {
       {/* Account Actions */}
       <Card style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Account</Text>
-        
+
         <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
           <Text style={styles.menuIcon}>🚪</Text>
           <View style={styles.menuContent}>
@@ -353,8 +424,12 @@ const MoreScreen: React.FC = () => {
         <TouchableOpacity style={styles.menuItem} onPress={handleDeleteAccount}>
           <Text style={styles.menuIcon}>🗑️</Text>
           <View style={styles.menuContent}>
-            <Text style={[styles.menuTitle, styles.deleteText]}>Delete Account</Text>
-            <Text style={styles.menuSubtitle}>Permanently delete your data</Text>
+            <Text style={[styles.menuTitle, styles.deleteText]}>
+              Delete Account
+            </Text>
+            <Text style={styles.menuSubtitle}>
+              Permanently delete your data
+            </Text>
           </View>
           <Text style={styles.menuArrow}>›</Text>
         </TouchableOpacity>
@@ -368,7 +443,7 @@ const MoreScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAFAFA',
+    backgroundColor: "#FAFAFA",
   },
   header: {
     paddingHorizontal: 20,
@@ -377,12 +452,12 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333333',
+    fontWeight: "bold",
+    color: "#333333",
   },
   subtitle: {
     fontSize: 16,
-    color: '#666666',
+    color: "#666666",
     marginTop: 4,
   },
   profileCard: {
@@ -390,56 +465,61 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   profileSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   profileAvatar: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#4CAF50',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#4CAF50",
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 16,
   },
   profileAvatarText: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
+    fontWeight: "bold",
+    color: "#FFFFFF",
   },
   profileInfo: {
     flex: 1,
   },
   profileName: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333333',
+    fontWeight: "bold",
+    color: "#333333",
   },
   profileEmail: {
     fontSize: 14,
-    color: '#666666',
+    color: "#666666",
     marginTop: 2,
   },
   profileStatus: {
     fontSize: 12,
-    color: '#4CAF50',
-    fontWeight: '500',
+    color: "#4CAF50",
+    fontWeight: "500",
+    marginTop: 2,
+  },
+  profileStats: {
+    fontSize: 11,
+    color: "#999999",
     marginTop: 2,
   },
   profileArrow: {
     fontSize: 18,
-    color: '#CCCCCC',
+    color: "#CCCCCC",
   },
   premiumCard: {
     marginHorizontal: 20,
     marginBottom: 16,
-    backgroundColor: '#FFF3E0',
+    backgroundColor: "#FFF3E0",
     borderWidth: 1,
-    borderColor: '#FF9800',
+    borderColor: "#FF9800",
   },
   premiumHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 12,
   },
   premiumIcon: {
@@ -451,12 +531,12 @@ const styles = StyleSheet.create({
   },
   premiumTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#E65100',
+    fontWeight: "bold",
+    color: "#E65100",
   },
   premiumSubtitle: {
     fontSize: 14,
-    color: '#F57C00',
+    color: "#F57C00",
     marginTop: 2,
   },
   premiumFeatures: {
@@ -464,11 +544,11 @@ const styles = StyleSheet.create({
   },
   premiumFeature: {
     fontSize: 14,
-    color: '#E65100',
+    color: "#E65100",
     marginBottom: 4,
   },
   premiumButton: {
-    backgroundColor: '#FF9800',
+    backgroundColor: "#FF9800",
     borderRadius: 8,
   },
   sectionCard: {
@@ -477,46 +557,46 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333333',
+    fontWeight: "bold",
+    color: "#333333",
     marginBottom: 16,
   },
   menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: "#F0F0F0",
   },
   menuIcon: {
     fontSize: 20,
     marginRight: 12,
     width: 24,
-    textAlign: 'center',
+    textAlign: "center",
   },
   menuContent: {
     flex: 1,
   },
   menuTitle: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#333333',
+    fontWeight: "500",
+    color: "#333333",
   },
   menuSubtitle: {
     fontSize: 12,
-    color: '#666666',
+    color: "#666666",
     marginTop: 2,
   },
   menuArrow: {
     fontSize: 18,
-    color: '#CCCCCC',
+    color: "#CCCCCC",
   },
   notificationItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: "#F0F0F0",
   },
   notificationContent: {
     flex: 1,
@@ -524,19 +604,19 @@ const styles = StyleSheet.create({
   },
   notificationTitle: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#333333',
+    fontWeight: "500",
+    color: "#333333",
   },
   notificationSubtitle: {
     fontSize: 12,
-    color: '#666666',
+    color: "#666666",
     marginTop: 2,
   },
   logoutText: {
-    color: '#FF9800',
+    color: "#FF9800",
   },
   deleteText: {
-    color: '#F44336',
+    color: "#F44336",
   },
   bottomSpacing: {
     height: 20,
