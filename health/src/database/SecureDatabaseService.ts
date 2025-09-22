@@ -269,6 +269,7 @@ export class SecureDatabaseService {
     
     // Whitelist of allowed table names
     const allowedTables = [
+      'users',
       'weight_readings',
       'blood_sugar_readings',
       'blood_pressure_readings',

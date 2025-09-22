@@ -115,6 +115,11 @@ export class EncryptionService {
     }
   }
 
+  // Verify hash (alias for verifyData for compatibility)
+  static async verifyHash(data: string, hash: string): Promise<boolean> {
+    return this.verifyData(data, hash);
+  }
+
   // Clear encryption keys (for logout/reset)
   static async clearEncryptionKeys(): Promise<void> {
     try {

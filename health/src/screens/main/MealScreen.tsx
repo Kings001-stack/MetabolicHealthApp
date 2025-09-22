@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,9 @@ import { useNavigation } from '@react-navigation/native';
 import Card from '@/components/common/Card';
 import Button from '@/components/common/Button';
 import Input from '@/components/common/Input';
+import AuthenticationService from '@/services/auth/AuthenticationService';
+import MealService, { DailyTotals } from '@/services/meals/MealService';
+import NutritionService, { NutritionSearchItem } from '@/services/nutrition/NutritionService';
 
 interface MealPlan {
   id: string;
@@ -27,8 +30,36 @@ const MealScreen: React.FC = () => {
   const navigation = useNavigation();
   const [selectedTab, setSelectedTab] = useState<'plans' | 'recipes' | 'counter' | 'hydration'>('plans');
   const [searchQuery, setSearchQuery] = useState('');
-  const [waterIntake, setWaterIntake] = useState(4); // glasses consumed
+  const [waterIntake, setWaterIntake] = useState(0); // glasses consumed
   const [dailyWaterGoal] = useState(8); // glasses target
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const GLASS_ML = 250;
+
+  // Food search and daily totals state
+  const [foodSearchResults, setFoodSearchResults] = useState<NutritionSearchItem[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [dailyTotals, setDailyTotals] = useState<DailyTotals>({ calories: 0, carbs: 0, protein: 0, fat: 0 });
+
+  useEffect(() => {
+    const init = async () => {
+      const user = await AuthenticationService.getCurrentUser();
+      if (user) {
+        setCurrentUserId(user.id);
+        try {
+          const amountMl = await MealService.getHydrationByDate(user.id);
+          const glasses = Math.max(0, Math.round(amountMl / GLASS_ML));
+          setWaterIntake(glasses);
+          
+          // Load daily nutrition totals
+          const totals = await MealService.getDailyTotals(user.id);
+          setDailyTotals(totals);
+        } catch (e) {
+          // Keep default if load fails
+        }
+      }
+    };
+    init();
+  }, []);
 
   const todayMeals: MealPlan[] = [
     {
@@ -95,15 +126,80 @@ const MealScreen: React.FC = () => {
     }
   };
 
-  const handleAddWater = () => {
+  const handleAddWater = async () => {
     if (waterIntake < dailyWaterGoal) {
-      setWaterIntake(prev => prev + 1);
+      const next = waterIntake + 1;
+      setWaterIntake(next);
+      if (currentUserId) {
+        try {
+          await MealService.saveHydration(currentUserId, next * GLASS_ML);
+        } catch (e) {
+          // Optional: show a toast/alert in future
+        }
+      }
     }
   };
 
-  const handleRemoveWater = () => {
+  const handleRemoveWater = async () => {
     if (waterIntake > 0) {
-      setWaterIntake(prev => prev - 1);
+      const next = waterIntake - 1;
+      setWaterIntake(next);
+      if (currentUserId) {
+        try {
+          await MealService.saveHydration(currentUserId, next * GLASS_ML);
+        } catch (e) {
+          // Optional: show a toast/alert in future
+        }
+      }
+    }
+  };
+
+  const handleFoodSearch = async (query: string) => {
+    if (!query.trim()) {
+      setFoodSearchResults([]);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const results = await NutritionService.searchFoods(query.trim());
+      setFoodSearchResults(results);
+    } catch (e) {
+      console.error('Food search failed:', e);
+      setFoodSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleAddFoodItem = async (item: NutritionSearchItem) => {
+    if (!currentUserId) return;
+    try {
+      // Get food details for nutrition info
+      const details = await NutritionService.getFoodDetails(item.fdcId);
+      const mealId = await MealService.getOrCreateDailyMeal(currentUserId);
+      
+      // Add item with nutrition data
+      await MealService.addMealItem({
+        meal_id: mealId,
+        food_name: details.description,
+        brand_name: details.brandOwner || null,
+        serving_qty: 1,
+        serving_unit: 'serving',
+        calories: details.labelNutrients?.calories?.value || 0,
+        carbs: details.labelNutrients?.carbohydrates?.value || 0,
+        protein: details.labelNutrients?.protein?.value || 0,
+        fat: details.labelNutrients?.fat?.value || 0,
+      });
+      
+      // Refresh daily totals
+      const totals = await MealService.getDailyTotals(currentUserId);
+      setDailyTotals(totals);
+      
+      // Clear search
+      setSearchQuery('');
+      setFoodSearchResults([]);
+    } catch (e) {
+      console.error('Failed to add food item:', e);
     }
   };
 
@@ -232,15 +328,47 @@ const MealScreen: React.FC = () => {
         <Input
           placeholder="Search food items..."
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={(text) => {
+            setSearchQuery(text);
+            handleFoodSearch(text);
+          }}
           style={styles.searchInput}
         />
+        
+        {isSearching && (
+          <Text style={styles.searchStatus}>Searching...</Text>
+        )}
+        
+        {foodSearchResults.length > 0 && (
+          <View style={styles.searchResults}>
+            <Text style={styles.searchResultsTitle}>Search Results</Text>
+            {foodSearchResults.slice(0, 5).map((item) => (
+              <TouchableOpacity
+                key={item.fdcId}
+                style={styles.searchResultItem}
+                onPress={() => handleAddFoodItem(item)}
+              >
+                <View style={styles.searchResultInfo}>
+                  <Text style={styles.searchResultName}>{item.description}</Text>
+                  {item.brandOwner && (
+                    <Text style={styles.searchResultBrand}>{item.brandOwner}</Text>
+                  )}
+                </View>
+                <Text style={styles.addButton}>+</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
         
         <View style={styles.quickFoods}>
           <Text style={styles.quickFoodsTitle}>Quick Add</Text>
           <View style={styles.quickFoodsGrid}>
             {['Apple', 'Banana', 'Rice', 'Bread', 'Pasta', 'Potato'].map((food) => (
-              <TouchableOpacity key={food} style={styles.quickFoodItem}>
+              <TouchableOpacity
+                key={food}
+                style={styles.quickFoodItem}
+                onPress={() => handleFoodSearch(food)}
+              >
                 <Text style={styles.quickFoodText}>{food}</Text>
               </TouchableOpacity>
             ))}
@@ -248,10 +376,24 @@ const MealScreen: React.FC = () => {
         </View>
         
         <View style={styles.carbSummary}>
-          <Text style={styles.carbSummaryTitle}>Today's Carbs</Text>
-          <Text style={styles.carbSummaryValue}>80g / 150g</Text>
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: '53%' }]} />
+          <Text style={styles.carbSummaryTitle}>Today's Nutrition</Text>
+          <View style={styles.nutritionGrid}>
+            <View style={styles.nutritionGridItem}>
+              <Text style={styles.nutritionGridValue}>{dailyTotals.calories.toFixed(0)}</Text>
+              <Text style={styles.nutritionGridLabel}>calories</Text>
+            </View>
+            <View style={styles.nutritionGridItem}>
+              <Text style={styles.nutritionGridValue}>{dailyTotals.carbs.toFixed(1)}g</Text>
+              <Text style={styles.nutritionGridLabel}>carbs</Text>
+            </View>
+            <View style={styles.nutritionGridItem}>
+              <Text style={styles.nutritionGridValue}>{dailyTotals.protein.toFixed(1)}g</Text>
+              <Text style={styles.nutritionGridLabel}>protein</Text>
+            </View>
+            <View style={styles.nutritionGridItem}>
+              <Text style={styles.nutritionGridValue}>{dailyTotals.fat.toFixed(1)}g</Text>
+              <Text style={styles.nutritionGridLabel}>fat</Text>
+            </View>
           </View>
         </View>
       </Card>
@@ -642,6 +784,68 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#4CAF50',
     marginBottom: 12,
+  },
+  searchStatus: {
+    fontSize: 14,
+    color: '#666666',
+    textAlign: 'center',
+    marginVertical: 8,
+  },
+  searchResults: {
+    marginVertical: 12,
+    maxHeight: 200,
+  },
+  searchResultsTitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333333',
+    marginBottom: 8,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  searchResultInfo: {
+    flex: 1,
+  },
+  searchResultName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333333',
+  },
+  searchResultBrand: {
+    fontSize: 12,
+    color: '#666666',
+    marginTop: 2,
+  },
+  addButton: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    paddingHorizontal: 8,
+  },
+  nutritionGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: 8,
+  },
+  nutritionGridItem: {
+    alignItems: 'center',
+  },
+  nutritionGridValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  nutritionGridLabel: {
+    fontSize: 10,
+    color: '#666666',
+    marginTop: 2,
   },
   hydrationCard: {
     marginBottom: 16,
