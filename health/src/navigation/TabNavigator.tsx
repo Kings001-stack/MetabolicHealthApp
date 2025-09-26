@@ -18,7 +18,12 @@ const TabIcon: React.FC<{ icon: string; focused: boolean }> = ({ icon, focused }
   <Text style={[styles.tabIcon, focused && styles.tabIconFocused]}>{icon}</Text>
 );
 
-const TabNavigator: React.FC = () => {
+interface TabNavigatorProps {
+  onLogout?: () => void;
+  onAccountDeleted?: () => void;
+}
+
+const TabNavigator: React.FC<TabNavigatorProps> = ({ onLogout, onAccountDeleted }) => {
   return (
     <Tab.Navigator
       screenOptions={{
@@ -63,12 +68,19 @@ const TabNavigator: React.FC = () => {
       />
       <Tab.Screen
         name="More"
-        component={MoreScreen}
         options={{
           tabBarLabel: 'More',
           tabBarIcon: ({ focused }) => <TabIcon icon="⚙️" focused={focused} />,
         }}
-      />
+      >
+        {(props) => (
+          <MoreScreen 
+            {...props} 
+            onLogout={onLogout}
+            onAccountDeleted={onAccountDeleted}
+          />
+        )}
+      </Tab.Screen>
     </Tab.Navigator>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
 import Button from '@/components/common/Button';
 import Input from '@/components/common/Input';
 import Card from '@/components/common/Card';
+import AuthenticationService from '@/services/auth/AuthenticationService';
 
 interface ProfileSetupScreenProps {
   onComplete: (profileData: any) => void;
@@ -17,7 +18,6 @@ interface ProfileSetupScreenProps {
 
 const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComplete }) => {
   const [formData, setFormData] = useState({
-    name: '',
     age: '',
     gender: '',
     height: '',
@@ -25,7 +25,27 @@ const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComplete }) =
     activityLevel: '',
   });
 
+  const [userName, setUserName] = useState<string>('');
+  const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState<any>({});
+
+  useEffect(() => {
+    loadUserData();
+  }, []);
+
+  const loadUserData = async () => {
+    try {
+      const user = await AuthenticationService.getCurrentUser();
+      if (user) {
+        setUserName(user.name);
+      }
+    } catch (error) {
+      console.error('Failed to load user data:', error);
+      Alert.alert('Error', 'Failed to load user information');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const genderOptions = ['Male', 'Female', 'Other'];
   const activityLevels = ['Sedentary', 'Lightly Active', 'Moderately Active', 'Very Active'];
@@ -33,7 +53,6 @@ const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComplete }) =
   const validateForm = () => {
     const newErrors: any = {};
 
-    if (!formData.name.trim()) newErrors.name = 'Name is required';
     if (!formData.age) newErrors.age = 'Age is required';
     else if (parseInt(formData.age) < 1 || parseInt(formData.age) > 120) {
       newErrors.age = 'Please enter a valid age';
@@ -49,7 +68,12 @@ const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComplete }) =
 
   const handleContinue = () => {
     if (validateForm()) {
-      onComplete(formData);
+      // Include the user's name from authentication along with the form data
+      const profileData = {
+        name: userName,
+        ...formData,
+      };
+      onComplete(profileData);
     }
   };
 
@@ -60,24 +84,27 @@ const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComplete }) =
     }
   };
 
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading your profile...</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.title}>Tell us about yourself</Text>
           <Text style={styles.subtitle}>
-            This helps us provide personalized health insights
+            Hi {userName}! This helps us provide personalized health insights
           </Text>
         </View>
 
         <Card style={styles.formCard}>
-          <Input
-            label="Full Name"
-            value={formData.name}
-            onChangeText={(value) => updateField('name', value)}
-            placeholder="Enter your full name"
-            error={errors.name}
-          />
 
           <Input
             label="Age"
@@ -313,6 +340,15 @@ const styles = StyleSheet.create({
   },
   continueButton: {
     borderRadius: 12,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#666666',
   },
 });
 

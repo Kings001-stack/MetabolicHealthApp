@@ -6,12 +6,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
-  KeyboardAvoidingView,
-  ScrollView,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AuthenticationService, { SignupData } from '../../services/auth/AuthenticationService';
+import KeyboardDismissWrapper from '../common/KeyboardDismissWrapper';
 
 interface SignupFormProps {
   onSignupSuccess: () => void;
@@ -33,24 +31,28 @@ export const SignupForm: React.FC<SignupFormProps> = ({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState<Partial<SignupData>>({});
 
-  const validateForm = (): boolean => {
-    const newErrors: Partial<SignupData> = {};
+  const validateForm = () => {
+    const newErrors: any = {};
 
     // Name validation
     if (!formData.name.trim()) {
-      newErrors.name = 'Name is required';
+      newErrors.name = 'Full name is required';
     } else if (formData.name.trim().length < 2) {
       newErrors.name = 'Name must be at least 2 characters';
+    } else if (formData.name.trim().length > 50) {
+      newErrors.name = 'Name must be less than 50 characters';
+    } else if (!/^[a-zA-Z\s'-]+$/.test(formData.name.trim())) {
+      newErrors.name = 'Name can only contain letters, spaces, hyphens, and apostrophes';
     }
 
     // Email validation
-    if (!formData.email.trim()) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!formData.email) {
       newErrors.email = 'Email is required';
-    } else {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(formData.email)) {
-        newErrors.email = 'Please enter a valid email address';
-      }
+    } else if (!emailRegex.test(formData.email)) {
+      newErrors.email = 'Please enter a valid email address';
+    } else if (formData.email.length > 100) {
+      newErrors.email = 'Email must be less than 100 characters';
     }
 
     // Password validation
@@ -58,6 +60,8 @@ export const SignupForm: React.FC<SignupFormProps> = ({
       newErrors.password = 'Password is required';
     } else if (formData.password.length < 8) {
       newErrors.password = 'Password must be at least 8 characters';
+    } else if (formData.password.length > 128) {
+      newErrors.password = 'Password must be less than 128 characters';
     } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(formData.password)) {
       newErrors.password = 'Password must contain uppercase, lowercase, and number';
     }
@@ -84,9 +88,9 @@ export const SignupForm: React.FC<SignupFormProps> = ({
 
       if (result.success) {
         Alert.alert(
-          'Success!',
-          'Your account has been created successfully.',
-          [{ text: 'OK', onPress: onSignupSuccess }]
+          'Account Created!',
+          `Welcome ${formData.name}! Your account has been created and you are now logged in.`,
+          [{ text: 'Continue', onPress: onSignupSuccess }]
         );
       } else {
         Alert.alert('Signup Failed', result.error || 'Please try again');
@@ -107,11 +111,7 @@ export const SignupForm: React.FC<SignupFormProps> = ({
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <KeyboardDismissWrapper style={styles.container} scrollable={true}>
         <View style={styles.header}>
           <Text style={styles.title}>Create Account</Text>
           <Text style={styles.subtitle}>Join us to track your health journey</Text>
@@ -235,8 +235,7 @@ export const SignupForm: React.FC<SignupFormProps> = ({
             </TouchableOpacity>
           </View>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardDismissWrapper>
   );
 };
 

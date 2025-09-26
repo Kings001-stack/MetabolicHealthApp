@@ -190,14 +190,35 @@ class DatabaseService {
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )`,
         `CREATE INDEX IF NOT EXISTS idx_hydration_user_date ON hydration_logs(user_id, date)`,
+
+        // Medication readings table
+        `CREATE TABLE IF NOT EXISTS medication_readings (
+          id TEXT PRIMARY KEY,
+          user_id TEXT REFERENCES users(id),
+          name TEXT NOT NULL,
+          dosage TEXT NOT NULL,
+          unit TEXT NOT NULL,
+          frequency TEXT NOT NULL,
+          timeTaken TEXT NOT NULL,
+          notes TEXT,
+          skipped BOOLEAN DEFAULT 0,
+          timestamp TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_medication_user_id ON medication_readings(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_medication_timestamp ON medication_readings(timestamp)`,
       ],
       down: [
         'DROP INDEX IF EXISTS idx_meals_user_date',
         'DROP INDEX IF EXISTS idx_meal_items_meal_id',
         'DROP INDEX IF EXISTS idx_hydration_user_date',
+        'DROP INDEX IF EXISTS idx_medication_user_id',
+        'DROP INDEX IF EXISTS idx_medication_timestamp',
         'DROP TABLE IF EXISTS meal_items',
         'DROP TABLE IF EXISTS meals',
         'DROP TABLE IF EXISTS hydration_logs',
+        'DROP TABLE IF EXISTS medication_readings',
       ],
     },
   ];

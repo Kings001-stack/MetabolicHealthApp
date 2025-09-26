@@ -1,65 +1,177 @@
 
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
+import MedicationLogger from '@/components/tracking/MedicationLogger';
+import AuthenticationService from '@/services/auth/AuthenticationService';
+import DatabaseService from '@/database/DatabaseService';
+import { User } from '@/database/repositories/UserRepository';
 
-const mockMedications = [
-  { id: '1', name: 'Metformin', dosage: '500mg', time: 'Morning' },
-  { id: '2', name: 'Lisinopril', dosage: '10mg', time: 'Morning' },
-  { id: '3', name: 'Atorvastatin', dosage: '20mg', time: 'Evening' },
-];
+interface MedicationReading {
+  id: string;
+  user_id: string;
+  name: string;
+  dosage: string;
+  unit: string;
+  frequency: string;
+  timeTaken: string;
+  notes?: string;
+  skipped: boolean;
+  timestamp: string;
+  created_at: string;
+  updated_at: string;
+}
 
 const MedicationScreen = () => {
-  const [medications, setMedications] = useState(mockMedications);
-  const [newMedication, setNewMedication] = useState('');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [recentReadings, setRecentReadings] = useState<MedicationReading[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const addMedication = () => {
-    if (newMedication.trim() === '') return;
-    const newMed = {
-      id: Math.random().toString(),
-      name: newMedication,
-      dosage: '10mg', // Default dosage for new meds
-      time: 'Morning', // Default time
-    };
-    setMedications([...medications, newMed]);
-    setNewMedication('');
+  useEffect(() => {
+    loadUserAndReadings();
+  }, []);
+
+  const loadUserAndReadings = async () => {
+    try {
+      const user = await AuthenticationService.getCurrentUser();
+      setCurrentUser(user);
+
+      if (user) {
+        await loadRecentReadings(user.id);
+      }
+    } catch (error) {
+      console.error('Failed to load user data:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const renderItem = ({ item }) => (
-    <View style={styles.medicationItem}>
-      <View>
-        <Text style={styles.medicationName}>{item.name}</Text>
-        <Text style={styles.medicationDosage}>{`${item.dosage} - ${item.time}`}</Text>
-      </View>
-      <TouchableOpacity>
-        <Feather name="more-vertical" size={24} color="#999" />
-      </TouchableOpacity>
-    </View>
-  );
+  const loadRecentReadings = async (userId: string) => {
+    try {
+      const readings = await DatabaseService.executeQuery<MedicationReading>(
+        `SELECT * FROM medication_readings 
+         WHERE user_id = ? 
+         ORDER BY timestamp DESC 
+         LIMIT 5`,
+        [userId]
+      );
+      setRecentReadings(readings);
+    } catch (error) {
+      console.error('Failed to load medication readings:', error);
+    }
+  };
+
+  const handleLogMedication = async (data: {
+    name: string;
+    dosage: string;
+    unit: string;
+    frequency: string;
+    notes?: string;
+    skipped: boolean;
+  }) => {
+    if (!currentUser) {
+      Alert.alert('Error', 'Please log in to save medication readings');
+      return;
+    }
+
+    try {
+      const reading: Omit<MedicationReading, 'created_at' | 'updated_at'> = {
+        id: `med_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        user_id: currentUser.id,
+        name: data.name,
+        dosage: data.dosage,
+        unit: data.unit,
+        frequency: data.frequency,
+        timeTaken: new Date().toISOString(),
+        notes: data.notes,
+        skipped: data.skipped,
+        timestamp: new Date().toISOString(),
+      };
+
+      await DatabaseService.executeUpdate(
+        `INSERT INTO medication_readings 
+         (id, user_id, name, dosage, unit, frequency, timeTaken, notes, skipped, timestamp, created_at, updated_at) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          reading.id,
+          reading.user_id,
+          reading.name,
+          reading.dosage,
+          reading.unit,
+          reading.frequency,
+          reading.timeTaken,
+          reading.notes,
+          reading.skipped ? 1 : 0,
+          reading.timestamp,
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ]
+      );
+
+      const action = data.skipped ? 'skip logged' : 'intake logged';
+      Alert.alert(
+        'Success',
+        `${data.name} ${action} successfully!`,
+        [{ text: 'OK' }]
+      );
+
+      // Reload recent readings
+      await loadRecentReadings(currentUser.id);
+    } catch (error) {
+      console.error('Failed to save medication reading:', error);
+      Alert.alert('Error', 'Failed to save medication reading');
+    }
+  };
+
+  const formatDate = (timestamp: string) => {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Medication Log</Text>
-      </View>
-      <FlatList
-        data={medications}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
-      />
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Add new medication..."
-          value={newMedication}
-          onChangeText={setNewMedication}
-        />
-        <TouchableOpacity style={styles.addButton} onPress={addMedication}>
-          <Text style={styles.addButtonText}>Add</Text>
-        </TouchableOpacity>
-      </View>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Log Medication</Text>
+          <Text style={styles.headerSubtitle}>
+            {currentUser ? `Welcome, ${currentUser.name}` : 'Please log in'}
+          </Text>
+        </View>
+
+        <MedicationLogger onLog={handleLogMedication} />
+
+        {recentReadings.length > 0 && (
+          <View style={styles.recentSection}>
+            <Text style={styles.recentTitle}>Recent Activity</Text>
+            {recentReadings.map((reading) => (
+              <View key={reading.id} style={styles.readingCard}>
+                <View style={styles.readingHeader}>
+                  <Text style={styles.readingValue}>
+                    {reading.name}
+                  </Text>
+                  <Text style={[styles.readingStatus, { color: reading.skipped ? '#FF9800' : '#4CAF50' }]}>
+                    {reading.skipped ? 'Skipped' : 'Taken'}
+                  </Text>
+                </View>
+                <Text style={styles.readingDosage}>
+                  {reading.dosage} {reading.unit} - {reading.frequency}
+                </Text>
+                <Text style={styles.readingDate}>
+                  {formatDate(reading.timestamp)}
+                </Text>
+                {reading.notes && (
+                  <Text style={styles.readingNotes}>
+                    Notes: {reading.notes}
+                  </Text>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 };
@@ -81,61 +193,60 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
   },
-  listContainer: {
+  headerSubtitle: {
+    fontSize: 14,
+    color: '#666666',
+    marginTop: 4,
+  },
+  recentSection: {
     padding: 20,
   },
-  medicationItem: {
+  recentTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333333',
+    marginBottom: 16,
+  },
+  readingCard: {
     backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderRadius: 10,
-    marginBottom: 15,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
-  medicationName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#444',
-  },
-  medicationDosage: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 4,
-  },
-  inputContainer: {
+  readingHeader: {
     flexDirection: 'row',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-  },
-  input: {
-    flex: 1,
-    height: 50,
-    backgroundColor: '#F0F0F0',
-    borderRadius: 10,
-    paddingHorizontal: 15,
-    fontSize: 16,
-  },
-  addButton: {
-    marginLeft: 10,
-    height: 50,
-    paddingHorizontal: 20,
-    backgroundColor: '#4CAF50',
-    borderRadius: 10,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 8,
   },
-  addButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  readingValue: {
+    fontSize: 18,
     fontWeight: 'bold',
+    color: '#333333',
+  },
+  readingStatus: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  readingDosage: {
+    fontSize: 14,
+    color: '#666666',
+    marginBottom: 4,
+  },
+  readingDate: {
+    fontSize: 14,
+    color: '#666666',
+    marginBottom: 4,
+  },
+  readingNotes: {
+    fontSize: 14,
+    color: '#666666',
+    fontStyle: 'italic',
   },
 });
 

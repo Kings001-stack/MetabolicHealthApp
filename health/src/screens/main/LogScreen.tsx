@@ -520,6 +520,7 @@ const LogScreen: React.FC = () => {
       {/* Quick Log Actions */}
       <Card style={styles.quickLogCard}>
         <Text style={styles.sectionTitle}>Quick Log</Text>
+        <Text style={styles.sectionSubtitle}>Tap any health metric below to log your readings</Text>
         <View style={styles.trackingGrid}>
           {trackingOptions.map((option) => (
             <TouchableOpacity
@@ -550,8 +551,8 @@ const LogScreen: React.FC = () => {
       <Card style={styles.recentLogsCard}>
         <View style={styles.recentLogsHeader}>
           <Text style={styles.sectionTitle}>Recent Logs</Text>
-          <TouchableOpacity>
-            <Text style={styles.viewAllText}>View All</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('HealthLogManager' as never)}>
+            <Text style={styles.viewAllText}>Manage All</Text>
           </TouchableOpacity>
         </View>
 
@@ -783,6 +784,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333333',
     marginBottom: 16,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#666666',
+    marginBottom: 16,
+    fontStyle: 'italic',
   },
   trackingGrid: {
     flexDirection: 'row',

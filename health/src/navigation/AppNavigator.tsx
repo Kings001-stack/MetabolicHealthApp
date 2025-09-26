@@ -3,6 +3,14 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import AuthenticationService from "../services/auth/AuthenticationService";
 
+// Testing mode - set to true to force onboarding flow for testing
+const TESTING_ONBOARDING = false;
+// Reset mode - set to true to clear AsyncStorage and start fresh (for testing)
+const RESET_APP_DATA = false;
+
+// Authentication Screens
+import AuthScreen from "@/screens/auth/AuthScreen";
+
 // Onboarding Screens
 import SplashScreen from "@/screens/onboarding/SplashScreen";
 import OnboardingSlides from "@/screens/onboarding/OnboardingSlides";
@@ -27,6 +35,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const AppNavigator: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isFirstLaunch, setIsFirstLaunch] = useState(false);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
 
@@ -36,26 +45,48 @@ const AppNavigator: React.FC = () => {
 
   const checkOnboardingStatus = async () => {
     try {
-      // Check if user is authenticated - if so, skip onboarding
-      const isAuthenticated = await AuthenticationService.isAuthenticated();
-      if (isAuthenticated) {
-        setHasCompletedOnboarding(true);
+      if (RESET_APP_DATA) {
+        // Clear all AsyncStorage for fresh start
+        console.log('Reset mode: Clearing all app data');
+        await AsyncStorage.multiRemove([
+          'hasLaunched',
+          'onboardingComplete',
+          'userProfile',
+          'userGoals'
+        ]);
+        await AuthenticationService.logout();
+      }
+
+      if (TESTING_ONBOARDING) {
+        // Force onboarding flow for testing
+        console.log('Testing mode: Forcing onboarding flow');
+        setIsAuthenticated(false);
+        setHasCompletedOnboarding(false);
+        setIsFirstLaunch(true);
         setIsLoading(false);
         return;
       }
 
+      // Check if user has completed onboarding (this determines if they see onboarding screens)
+      const onboardingComplete = await AsyncStorage.getItem("onboardingComplete");
+      const hasCompletedOnboarding = onboardingComplete === "true";
+      
+      // Check if user is authenticated
+      const authenticated = await AuthenticationService.isAuthenticated();
+      
+      // Check if this is first launch for UI purposes
       const hasLaunched = await AsyncStorage.getItem("hasLaunched");
-      const onboardingComplete =
-        await AsyncStorage.getItem("onboardingComplete");
-
-      if (hasLaunched === null) {
-        setIsFirstLaunch(true);
+      const isFirstLaunch = hasLaunched === null;
+      
+      if (isFirstLaunch) {
         await AsyncStorage.setItem("hasLaunched", "true");
       }
 
-      if (onboardingComplete === "true") {
-        setHasCompletedOnboarding(true);
-      }
+      // Set states based on checks
+      setIsFirstLaunch(isFirstLaunch);
+      setIsAuthenticated(authenticated);
+      setHasCompletedOnboarding(hasCompletedOnboarding);
+
     } catch (error) {
       console.error("Error checking onboarding status:", error);
     } finally {
@@ -65,6 +96,50 @@ const AppNavigator: React.FC = () => {
 
   const handleSplashFinish = () => {
     setIsLoading(false);
+  };
+
+  const handleAuthSuccess = async () => {
+    setIsAuthenticated(true);
+    // For new signups, they need to complete onboarding
+    // For existing logins, check if they completed onboarding
+    const onboardingComplete = await AsyncStorage.getItem("onboardingComplete");
+    setHasCompletedOnboarding(onboardingComplete === "true");
+  };
+
+  const handleSignupSuccess = () => {
+    // New user just signed up - they need to complete profile setup
+    setIsAuthenticated(true);
+    // Don't set onboarding as complete yet - they still need ProfileSetup and GoalsSetup
+  };
+
+  const handleLogout = async () => {
+    try {
+      await AuthenticationService.logout();
+      // Reset authentication but keep onboarding status
+      // User has already seen onboarding, so they can go directly to login
+      setIsAuthenticated(false);
+      // Keep hasCompletedOnboarding as true so they go to login screen
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
+
+  const handleAccountDeleted = async () => {
+    try {
+      // Clear all local storage
+      await AsyncStorage.multiRemove([
+        'onboardingComplete',
+        'userProfile', 
+        'userGoals',
+        'hasLaunched'
+      ]);
+      // Reset all states to initial state
+      setIsAuthenticated(false);
+      setHasCompletedOnboarding(false);
+      setIsFirstLaunch(true);
+    } catch (error) {
+      console.error('Failed to clear app data after account deletion:', error);
+    }
   };
 
   const handleOnboardingComplete = async () => {
@@ -99,7 +174,7 @@ const AppNavigator: React.FC = () => {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {!hasCompletedOnboarding ? (
-        // Onboarding Flow
+        // Onboarding Flow - Show to ALL users who haven't completed onboarding
         <>
           <Stack.Screen name="OnboardingSlides">
             {(props) => (
@@ -113,8 +188,19 @@ const AppNavigator: React.FC = () => {
             {(props) => (
               <ConsentScreen
                 {...props}
-                onAccept={() => props.navigation.navigate("ProfileSetup")}
+                onAccept={() => props.navigation.navigate("Auth")}
                 onDecline={handleConsentDecline}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Auth">
+            {(props) => (
+              <AuthScreen 
+                {...props} 
+                onAuthSuccess={() => {
+                  handleSignupSuccess();
+                  props.navigation.navigate("ProfileSetup");
+                }}
               />
             )}
           </Stack.Screen>
@@ -135,10 +221,25 @@ const AppNavigator: React.FC = () => {
             )}
           </Stack.Screen>
         </>
+      ) : !isAuthenticated ? (
+        // User completed onboarding but not authenticated - Direct to Login
+        <Stack.Screen name="Auth">
+          {(props) => (
+            <AuthScreen {...props} onAuthSuccess={handleAuthSuccess} />
+          )}
+        </Stack.Screen>
       ) : (
-        // Main App Flow
+        // Main App Flow (for authenticated users who completed onboarding)
         <>
-        <Stack.Screen name="Main" component={TabNavigator} />
+        <Stack.Screen name="Main">
+          {(props) => (
+            <TabNavigator 
+              {...props} 
+              onLogout={handleLogout}
+              onAccountDeleted={handleAccountDeleted}
+            />
+          )}
+        </Stack.Screen>
         <Stack.Screen name="Medication" component={MedicationScreen} />
         <Stack.Screen name="BloodSugar" component={BloodSugarScreen} />
         <Stack.Screen name="WeeklyPlan" component={WeeklyPlanScreen} />

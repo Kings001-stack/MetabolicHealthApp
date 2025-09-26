@@ -17,7 +17,12 @@ import Button from "@/components/common/Button";
 import AuthenticationService from "@/services/auth/AuthenticationService";
 import { User } from "@/database/repositories/UserRepository";
 
-const MoreScreen: React.FC = () => {
+interface MoreScreenProps {
+  onLogout?: () => void;
+  onAccountDeleted?: () => void;
+}
+
+const MoreScreen: React.FC<MoreScreenProps> = ({ onLogout, onAccountDeleted }) => {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -60,7 +65,10 @@ const MoreScreen: React.FC = () => {
         onPress: async () => {
           try {
             await AuthenticationService.logout();
-            // The app will automatically redirect to login screen
+            // Call the callback to reset app state
+            if (onLogout) {
+              onLogout();
+            }
           } catch (error) {
             console.error('Logout failed:', error);
             Alert.alert('Error', 'Failed to logout. Please try again.');
@@ -90,12 +98,15 @@ const MoreScreen: React.FC = () => {
                   {
                     text: "Delete Account",
                     style: "destructive",
-                    onPress: async (password) => {
+                    onPress: async (password: string) => {
                       if (password) {
                         const result = await AuthenticationService.deleteAccount(password);
                         if (result.success) {
                           Alert.alert("Account Deleted", "Your account has been permanently deleted.");
-                          // The app will automatically redirect to login screen
+                          // Call the callback to reset app state
+                          if (onAccountDeleted) {
+                            onAccountDeleted();
+                          }
                         } else {
                           Alert.alert("Error", result.error || "Failed to delete account");
                         }

@@ -6,13 +6,11 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
-  KeyboardAvoidingView,
-  ScrollView,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AuthenticationService from '../../services/auth/AuthenticationService';
 import AuthService from '../../utils/security/AuthService';
+import KeyboardDismissWrapper from '../common/KeyboardDismissWrapper';
 
 interface LoginFormProps {
   onLoginSuccess: () => void;
@@ -107,11 +105,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <KeyboardDismissWrapper style={styles.container} scrollable={true}>
         <View style={styles.header}>
           <Text style={styles.title}>Welcome Back</Text>
           <Text style={styles.subtitle}>Sign in to continue your health journey</Text>
@@ -212,15 +206,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
           </View>
         </View>
 
-        {/* Demo Account Info */}
-        <View style={styles.demoInfo}>
-          <Text style={styles.demoTitle}>Demo Account</Text>
-          <Text style={styles.demoText}>
-            You can create a new account or use the demo features to explore the app.
-          </Text>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardDismissWrapper>
   );
 };
 
@@ -370,24 +356,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#4CAF50',
     fontWeight: '600',
-  },
-  demoInfo: {
-    backgroundColor: '#e8f5e8',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-  },
-  demoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2e7d32',
-    marginBottom: 4,
-  },
-  demoText: {
-    fontSize: 14,
-    color: '#388e3c',
-    textAlign: 'center',
-    lineHeight: 20,
   },
 });
 

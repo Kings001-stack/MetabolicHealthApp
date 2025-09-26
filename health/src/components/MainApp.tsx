@@ -5,6 +5,9 @@ import AppNavigator from '../navigation/AppNavigator';
 import AuthenticationService from '../services/auth/AuthenticationService';
 import DatabaseService from '../database/DatabaseService';
 
+// Testing mode - set to true to force onboarding flow for testing
+const TESTING_ONBOARDING = false;
+
 export const MainApp: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -22,10 +25,16 @@ export const MainApp: React.FC = () => {
       await DatabaseService.initialize();
       console.log('Database initialized');
       
-      // Check authentication status
-      const authenticated = await AuthenticationService.isAuthenticated();
-      console.log('Authentication status:', authenticated);
-      setIsAuthenticated(authenticated);
+      if (TESTING_ONBOARDING) {
+        // Force onboarding flow for testing
+        console.log('Testing mode: Forcing onboarding flow');
+        setIsAuthenticated(false);
+      } else {
+        // Check authentication status
+        const authenticated = await AuthenticationService.isAuthenticated();
+        console.log('Authentication status:', authenticated);
+        setIsAuthenticated(authenticated);
+      }
     } catch (error: any) {
       console.error('App initialization failed:', error);
       setError(error.message || 'Failed to initialize app');
@@ -67,6 +76,10 @@ export const MainApp: React.FC = () => {
   }
 
   if (!isAuthenticated) {
+    if (TESTING_ONBOARDING) {
+      // Skip auth screen and go directly to onboarding
+      return <AppNavigator />;
+    }
     return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
   }
 

@@ -1,10 +1,4 @@
-// Export all TypeScript types
-export * from './navigation';
-export * from './health';
-export * from './user';
-export * from './nutrition';
-export * from './ads';
-export * from './api';
+// TypeScript types for the health app
 
 
 // types/health.ts
@@ -19,6 +13,7 @@ export interface BloodSugarReading {
   // types/navigation.ts
   export type RootStackParamList = {
     Splash: undefined;
+    Auth: undefined;
     OnboardingSlides: undefined;
     Consent: undefined;
     ProfileSetup: undefined;
