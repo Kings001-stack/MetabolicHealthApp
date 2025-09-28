@@ -1,18 +1,20 @@
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Alert, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import BloodPressureLogger from '@/components/tracking/BloodPressureLogger';
+import BloodPressureChart from '@/components/charts/BloodPressureChart';
 import AuthenticationService from '@/services/auth/AuthenticationService';
 import DatabaseService from '@/database/DatabaseService';
 import { User } from '@/database/repositories/UserRepository';
+import SuccessOverlay from '@/components/common/SuccessOverlay';
 
 interface BloodPressureReading {
   id: string;
   user_id: string;
   systolic: number;
   diastolic: number;
-  pulse?: number;
+  heart_rate?: number;
   notes?: string;
   timestamp: string;
   created_at: string;
@@ -23,6 +25,8 @@ const BloodPressureScreen = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [recentReadings, setRecentReadings] = useState<BloodPressureReading[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     loadUserAndReadings();
@@ -61,7 +65,7 @@ const BloodPressureScreen = () => {
   const handleLogBloodPressure = async (data: {
     systolic: number;
     diastolic: number;
-    pulse?: number;
+    heart_rate?: number;
     notes?: string;
   }) => {
     if (!currentUser) {
@@ -75,21 +79,21 @@ const BloodPressureScreen = () => {
         user_id: currentUser.id,
         systolic: data.systolic,
         diastolic: data.diastolic,
-        pulse: data.pulse,
+        heart_rate: data.heart_rate,
         notes: data.notes,
         timestamp: new Date().toISOString(),
       };
 
       await DatabaseService.executeUpdate(
         `INSERT INTO blood_pressure_readings 
-         (id, user_id, systolic, diastolic, pulse, notes, timestamp, created_at, updated_at) 
+         (id, user_id, systolic, diastolic, heart_rate, notes, timestamp, created_at, updated_at) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           reading.id,
           reading.user_id,
           reading.systolic,
           reading.diastolic,
-          reading.pulse,
+          reading.heart_rate,
           reading.notes,
           reading.timestamp,
           new Date().toISOString(),
@@ -97,11 +101,8 @@ const BloodPressureScreen = () => {
         ]
       );
 
-      Alert.alert(
-        'Success',
-        `Blood pressure logged: ${data.systolic}/${data.diastolic} mmHg`,
-        [{ text: 'OK' }]
-      );
+      setSuccessMessage(`Blood pressure logged: ${data.systolic}/${data.diastolic} mmHg`);
+      setShowSuccess(true);
 
       // Reload recent readings
       await loadRecentReadings(currentUser.id);
@@ -127,62 +128,120 @@ const BloodPressureScreen = () => {
     return { category: 'Crisis', color: '#9C27B0' };
   };
 
+  const getBPTrend = () => {
+    if (recentReadings.length < 2) return null;
+    const recent = recentReadings.slice(0, 2);
+    const currentSystolic = recent[0].systolic;
+    const previousSystolic = recent[1].systolic;
+    const diff = currentSystolic - previousSystolic;
+    if (Math.abs(diff) < 5) return { trend: 'stable', icon: '➡️', color: '#666666' };
+    if (diff > 0) return { trend: 'increasing', icon: '📈', color: '#FF5722' };
+    return { trend: 'decreasing', icon: '📉', color: '#4CAF50' };
+  };
+
+  // Transform data for chart component
+  const chartData = recentReadings.map(reading => ({
+    id: reading.id,
+    systolic: reading.systolic,
+    diastolic: reading.diastolic,
+    heart_rate: reading.heart_rate,
+    timestamp: new Date(reading.timestamp)
+  }));
+
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Loading...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
+  const renderHeader = () => (
+    <>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Log Blood Pressure</Text>
+        <Text style={styles.headerSubtitle}>
+          {currentUser ? `Welcome, ${currentUser.name}` : 'Please log in'}
+        </Text>
+      </View>
+
+      <BloodPressureLogger onLog={handleLogBloodPressure} />
+
+      {recentReadings.length > 0 && (
+        <>
+          <BloodPressureChart 
+            data={chartData} 
+            period="7d" 
+          />
+          
+          <View style={styles.trendSection}>
+            <Text style={styles.trendTitle}>Recent Trend</Text>
+            {(() => {
+              const trend = getBPTrend();
+              return trend ? (
+                <View style={styles.trendContainer}>
+                  <Text style={[styles.trendIcon, { color: trend.color }]}>{trend.icon}</Text>
+                  <Text style={[styles.trendText, { color: trend.color }]}>Blood pressure is {trend.trend}</Text>
+                </View>
+              ) : (
+                <Text style={styles.trendText}>Not enough data for trend analysis</Text>
+              );
+            })()} 
+          </View>
+
+          <View style={styles.recentSectionHeader}>
+            <Text style={styles.recentTitle}>Recent Readings</Text>
+          </View>
+        </>
+      )}
+    </>
+  );
+
+  const renderReading = ({ item }: { item: BloodPressureReading }) => {
+    const category = getBloodPressureCategory(item.systolic, item.diastolic);
+    return (
+      <View style={styles.readingCard}>
+        <View style={styles.readingHeader}>
+          <Text style={styles.readingValue}>
+            {item.systolic}/{item.diastolic} mmHg
+          </Text>
+          <View style={[styles.readingCategory, { backgroundColor: category.color }]}>
+            <Text style={styles.readingCategoryText}>{category.category}</Text>
+          </View>
+        </View>
+        <Text style={styles.readingDate}>
+          {formatDate(item.timestamp)}
+        </Text>
+        {item.heart_rate && (
+          <Text style={styles.readingPulse}>
+            Heart Rate: {item.heart_rate} bpm
+          </Text>
+        )}
+        {item.notes && (
+          <Text style={styles.readingNotes}>
+            Notes: {item.notes}
+          </Text>
+        )}
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Log Blood Pressure</Text>
-          <Text style={styles.headerSubtitle}>
-            {currentUser ? `Welcome, ${currentUser.name}` : 'Please log in'}
-          </Text>
-        </View>
-
-        <BloodPressureLogger onLog={handleLogBloodPressure} />
-
-        {recentReadings.length > 0 && (
-          <View style={styles.recentSection}>
-            <Text style={styles.recentTitle}>Recent Readings</Text>
-            {recentReadings.map((reading) => {
-              const category = getBloodPressureCategory(reading.systolic, reading.diastolic);
-              return (
-                <View key={reading.id} style={styles.readingCard}>
-                  <View style={styles.readingHeader}>
-                    <Text style={styles.readingValue}>
-                      {reading.systolic}/{reading.diastolic} mmHg
-                    </Text>
-                    <Text style={[styles.readingCategory, { color: category.color }]}>
-                      {category.category}
-                    </Text>
-                  </View>
-                  <Text style={styles.readingDate}>
-                    {formatDate(reading.timestamp)}
-                  </Text>
-                  {reading.pulse && (
-                    <Text style={styles.readingPulse}>
-                      Pulse: {reading.pulse} bpm
-                    </Text>
-                  )}
-                  {reading.notes && (
-                    <Text style={styles.readingNotes}>
-                      Notes: {reading.notes}
-                    </Text>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        )}
-      </ScrollView>
+      <FlatList
+        data={recentReadings}
+        renderItem={renderReading}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={renderHeader}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.listContainer}
+      />
+      <SuccessOverlay
+        visible={showSuccess}
+        message={successMessage}
+        onHide={() => setShowSuccess(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -218,8 +277,12 @@ const styles = StyleSheet.create({
     color: '#666666',
     marginTop: 4,
   },
-  recentSection: {
+  listContainer: {
+    paddingBottom: 20,
+  },
+  recentSectionHeader: {
     padding: 20,
+    paddingBottom: 0,
   },
   recentTitle: {
     fontSize: 20,
@@ -249,10 +312,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333333',
   },
-  readingCategory: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
   readingDate: {
     fontSize: 14,
     color: '#666666',
@@ -267,6 +326,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666666',
     fontStyle: 'italic',
+  },
+  readingCategory: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  readingCategoryText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  trendSection: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 16,
+    margin: 16,
+    marginTop: 0,
+  },
+  trendTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333333',
+    marginBottom: 8,
+  },
+  trendContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  trendIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  trendText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666666',
   },
 });
 

@@ -222,11 +222,16 @@ class WeightRepository {
 
     const latest = await this.findLatest();
 
+    const count = stats?.count ?? 0;
+    const average = stats && count > 0 ? stats.avg_weight : null;
+    const min = stats && count > 0 ? stats.min_weight : null;
+    const max = stats && count > 0 ? stats.max_weight : null;
+
     return {
-      count: stats?.count || 0,
-      average: stats?.count > 0 ? stats.avg_weight : null,
-      min: stats?.count > 0 ? stats.min_weight : null,
-      max: stats?.count > 0 ? stats.max_weight : null,
+      count,
+      average,
+      min,
+      max,
       latest,
     };
   }

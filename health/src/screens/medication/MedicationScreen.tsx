@@ -6,6 +6,7 @@ import MedicationLogger from '@/components/tracking/MedicationLogger';
 import AuthenticationService from '@/services/auth/AuthenticationService';
 import DatabaseService from '@/database/DatabaseService';
 import { User } from '@/database/repositories/UserRepository';
+import SuccessOverlay from '@/components/common/SuccessOverlay';
 
 interface MedicationReading {
   id: string;
@@ -26,6 +27,8 @@ const MedicationScreen = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [recentReadings, setRecentReadings] = useState<MedicationReading[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     loadUserAndReadings();
@@ -46,6 +49,12 @@ const MedicationScreen = () => {
     }
   };
 
+  // Surface success overlay for adding a medication from the logger
+  const handleAddMedication = () => {
+    setSuccessMessage('Medication added successfully!');
+    setShowSuccess(true);
+  };
+
   const loadRecentReadings = async (userId: string) => {
     try {
       const readings = await DatabaseService.executeQuery<MedicationReading>(
@@ -61,66 +70,16 @@ const MedicationScreen = () => {
     }
   };
 
-  const handleLogMedication = async (data: {
-    name: string;
-    dosage: string;
-    unit: string;
-    frequency: string;
-    notes?: string;
-    skipped: boolean;
-  }) => {
+  // Handle logs coming from MedicationLogger (MedicationLog shape)
+  const handleLogMedication = async (data: { medicationId: string; taken: boolean; timestamp: string; notes?: string }) => {
     if (!currentUser) {
       Alert.alert('Error', 'Please log in to save medication readings');
       return;
     }
-
-    try {
-      const reading: Omit<MedicationReading, 'created_at' | 'updated_at'> = {
-        id: `med_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        user_id: currentUser.id,
-        name: data.name,
-        dosage: data.dosage,
-        unit: data.unit,
-        frequency: data.frequency,
-        timeTaken: new Date().toISOString(),
-        notes: data.notes,
-        skipped: data.skipped,
-        timestamp: new Date().toISOString(),
-      };
-
-      await DatabaseService.executeUpdate(
-        `INSERT INTO medication_readings 
-         (id, user_id, name, dosage, unit, frequency, timeTaken, notes, skipped, timestamp, created_at, updated_at) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          reading.id,
-          reading.user_id,
-          reading.name,
-          reading.dosage,
-          reading.unit,
-          reading.frequency,
-          reading.timeTaken,
-          reading.notes,
-          reading.skipped ? 1 : 0,
-          reading.timestamp,
-          new Date().toISOString(),
-          new Date().toISOString(),
-        ]
-      );
-
-      const action = data.skipped ? 'skip logged' : 'intake logged';
-      Alert.alert(
-        'Success',
-        `${data.name} ${action} successfully!`,
-        [{ text: 'OK' }]
-      );
-
-      // Reload recent readings
-      await loadRecentReadings(currentUser.id);
-    } catch (error) {
-      console.error('Failed to save medication reading:', error);
-      Alert.alert('Error', 'Failed to save medication reading');
-    }
+    // For now, show only success overlay; MedicationLogger manages its own logs.
+    const action = data.taken ? 'intake logged' : 'skip logged';
+    setSuccessMessage(`Medication ${action} successfully!`);
+    setShowSuccess(true);
   };
 
   const formatDate = (timestamp: string) => {
@@ -141,7 +100,7 @@ const MedicationScreen = () => {
           </Text>
         </View>
 
-        <MedicationLogger onLog={handleLogMedication} />
+        <MedicationLogger onLog={handleLogMedication} onAddMedication={handleAddMedication} />
 
         {recentReadings.length > 0 && (
           <View style={styles.recentSection}>
@@ -172,6 +131,11 @@ const MedicationScreen = () => {
           </View>
         )}
       </ScrollView>
+      <SuccessOverlay
+        visible={showSuccess}
+        message={successMessage}
+        onHide={() => setShowSuccess(false)}
+      />
     </SafeAreaView>
   );
 };

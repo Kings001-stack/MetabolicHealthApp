@@ -10,16 +10,9 @@ import {
   ScrollView,
   FlatList,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import Card from '@/components/common/Card';
-
-interface BloodPressureReading {
-  id: string;
-  systolic: number;
-  diastolic: number;
-  heart_rate?: number;
-  timestamp: string;
-  notes?: string;
-}
+import HealthDataService, { BloodPressureReading } from '@/services/HealthDataService';
 
 interface BloodPressureLoggerProps {
   onLog: (reading: BloodPressureReading) => void;
@@ -34,10 +27,51 @@ const BloodPressureLogger: React.FC<BloodPressureLoggerProps> = ({ onLog, onEdit
   const [systolic, setSystolic] = useState('');
   const [diastolic, setDiastolic] = useState('');
   const [heartRate, setHeartRate] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [notes, setNotes] = useState('');
   const [readings, setReadings] = useState<BloodPressureReading[]>([]);
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [logStreak, setLogStreak] = useState(0);
+
+  useEffect(() => {
+    loadReadings();
+  }, []);
+
+  const loadReadings = async () => {
+    try {
+      setIsLoading(true);
+      const dbReadings = await HealthDataService.getBloodPressureReadings(10);
+      setReadings(dbReadings);
+
+      // Calculate streak
+      if (dbReadings.length > 0) {
+        const sortedReadings = dbReadings.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        let streak = 1;
+        let prevDate = new Date(sortedReadings[0].timestamp).toISOString().split('T')[0];
+        for (let i = 1; i < sortedReadings.length; i++) {
+          const currDate = new Date(sortedReadings[i].timestamp).toISOString().split('T')[0];
+          const diffDays = (new Date(prevDate).getTime() - new Date(currDate).getTime()) / (1000 * 3600 * 24);
+          if (diffDays === 1) {
+            streak++;
+          } else if (diffDays > 1) {
+            break;
+          }
+          prevDate = currDate;
+        }
+        setLogStreak(streak);
+        if (streak >= 7) {
+          Alert.alert('🎉 Achievement Unlocked', '7-day blood pressure log streak!');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load blood pressure readings:', error);
+      Alert.alert('Error', 'Failed to load your blood pressure history');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const validateInput = (): boolean => {
     const newErrors: { [key: string]: string } = {};
@@ -91,6 +125,15 @@ const BloodPressureLogger: React.FC<BloodPressureLoggerProps> = ({ onLog, onEdit
       }
     }
 
+    if (!date.trim()) {
+      newErrors.date = 'Date is required';
+    } else {
+      const parsedDate = new Date(date);
+      if (isNaN(parsedDate.getTime())) {
+        newErrors.date = 'Please enter a valid date (YYYY-MM-DD)';
+      }
+    }
+
     if (!newErrors.systolic && !newErrors.diastolic) {
       const sysValue = parseInt(systolic);
       const diaValue = parseInt(diastolic);
@@ -101,59 +144,79 @@ const BloodPressureLogger: React.FC<BloodPressureLoggerProps> = ({ onLog, onEdit
       }
     }
 
-    if (!date.trim()) {
-      newErrors.date = 'Date is required';
-    } else {
-      const parsedDate = new Date(date);
-      if (isNaN(parsedDate.getTime())) {
-        newErrors.date = 'Please enter a valid date (YYYY-MM-DD)';
-      }
-    }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = () => {
+  const updateStreak = (newReadingDate: string) => {
+    const today = new Date().toISOString().split('T')[0];
+    const lastReadingDate = readings[0]?.timestamp.split('T')[0];
+    if (lastReadingDate) {
+      const lastDate = new Date(lastReadingDate);
+      const newDate = new Date(newReadingDate);
+      const diffDays = (newDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24);
+      if (diffDays === 1 || (diffDays === 0 && newReadingDate === today)) {
+        setLogStreak(logStreak + 1);
+        if (logStreak + 1 >= 7) {
+          Alert.alert('🎉 Achievement Unlocked', '7-day blood pressure log streak!');
+        }
+      } else if (diffDays > 1) {
+        setLogStreak(1);
+      }
+    } else {
+      setLogStreak(1);
+    }
+  };
+
+  const handleSave = async () => {
     if (!validateInput()) return;
 
-    if (isEditMode && editingReading) {
-      const updatedReading: BloodPressureReading = {
-        ...editingReading,
-        systolic: parseInt(systolic),
-        diastolic: parseInt(diastolic),
-        heart_rate: heartRate.trim() ? parseInt(heartRate) : undefined,
-        timestamp: date,
-        notes: notes.trim() || undefined,
-      };
-
-      setReadings(readings.map((r) => (r.id === editingReading.id ? updatedReading : r)));
-      onEdit?.(updatedReading);
-      Alert.alert('Success', `Blood pressure updated: ${systolic}/${diastolic} mmHg`);
-    } else {
+    try {
       const reading: BloodPressureReading = {
-        id: Date.now().toString(),
+        id: isEditMode && editingReading ? editingReading.id : Date.now().toString(),
         systolic: parseInt(systolic),
         diastolic: parseInt(diastolic),
         heart_rate: heartRate.trim() ? parseInt(heartRate) : undefined,
-        timestamp: date,
+        timestamp: new Date(date).toISOString(),
         notes: notes.trim() || undefined,
       };
 
-      setReadings([reading, ...readings]);
-      onLog(reading);
-      Alert.alert('Success', `Blood pressure logged: ${systolic}/${diastolic} mmHg`);
-    }
+      if (isEditMode && editingReading) {
+        await HealthDataService.updateBloodPressureReading(reading);
+        setReadings(readings.map((r) => (r.id === editingReading.id ? reading : r)));
+        onEdit?.(reading);
+      } else {
+        await HealthDataService.saveBloodPressureReading(reading);
+        setReadings([reading, ...readings]);
+        updateStreak(date);
+        onLog(reading);
+      }
 
-    setSystolic('');
-    setDiastolic('');
-    setHeartRate('');
-    setNotes('');
-    setDate(new Date().toISOString().split('T')[0]);
-    setErrors({});
-    setIsVisible(false);
-    setIsEditMode(false);
-    setEditingReading(null);
+      setSystolic('');
+      setDiastolic('');
+      setHeartRate('');
+      setDate(new Date().toISOString().split('T')[0]);
+      setNotes('');
+      setErrors({});
+      setIsVisible(false);
+      setIsEditMode(false);
+      setEditingReading(null);
+    } catch (error) {
+      console.error('Failed to save blood pressure reading:', error);
+      Alert.alert('Error', 'Failed to save blood pressure reading. Please try again.');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await HealthDataService.deleteBloodPressureReading(id);
+      setReadings(readings.filter((r) => r.id !== id));
+      onDelete?.(id);
+      Alert.alert('Success', 'Reading deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete blood pressure reading:', error);
+      Alert.alert('Error', 'Failed to delete reading. Please try again.');
+    }
   };
 
   const getBPCategory = (systolic: number, diastolic: number) => {
@@ -175,7 +238,9 @@ const BloodPressureLogger: React.FC<BloodPressureLoggerProps> = ({ onLog, onEdit
       <Card style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.title}>❤️ Blood Pressure</Text>
-          <Text style={styles.subtitle}>Track your cardiovascular health</Text>
+          <Text style={styles.subtitle}>
+            Track your cardiovascular health {logStreak > 0 ? `(Streak: ${logStreak} days)` : ''}
+          </Text>
         </View>
 
         <TouchableOpacity style={styles.logButton} onPress={() => setIsVisible(true)}>
@@ -188,16 +253,23 @@ const BloodPressureLogger: React.FC<BloodPressureLoggerProps> = ({ onLog, onEdit
           <Text style={styles.quickInfoItem}>• Elevated: 120-129/&lt;80</Text>
           <Text style={styles.quickInfoItem}>• Stage 1: 130-139/80-89</Text>
           <Text style={styles.quickInfoItem}>• Stage 2: ≥140/≥90</Text>
+          <Text style={styles.quickInfoItem}>• Crisis: ≥180/≥120</Text>
         </View>
       </Card>
 
       <Card style={styles.historyContainer}>
         <View style={styles.header}>
           <Text style={styles.title}>📊 Recent Readings</Text>
-          <Text style={styles.subtitle}>Your blood pressure history</Text>
+          <Text style={styles.subtitle}>
+            Your blood pressure history {logStreak > 0 ? `(Streak: ${logStreak} days)` : ''}
+          </Text>
         </View>
 
-        {readings.length === 0 ? (
+        {isLoading ? (
+          <View style={styles.noHistoryContainer}>
+            <Text style={styles.noHistoryText}>Loading...</Text>
+          </View>
+        ) : readings.length === 0 ? (
           <View style={styles.noHistoryContainer}>
             <Text style={styles.noHistoryIcon}>📋</Text>
             <Text style={styles.noHistoryTitle}>No history yet</Text>
@@ -206,81 +278,72 @@ const BloodPressureLogger: React.FC<BloodPressureLoggerProps> = ({ onLog, onEdit
             </Text>
           </View>
         ) : (
-          <FlatList
-            data={readings.slice(0, 10)}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <View style={styles.historyItem}>
-                <View style={styles.historyContent}>
-                  <View style={styles.historyHeader}>
-                    <Text style={styles.historyValue}>
-                      {item.systolic}/{item.diastolic} mmHg
+          readings.slice(0, 5).map((item) => (
+            <View key={item.id} style={styles.historyItem}>
+              <View style={styles.historyContent}>
+                <View style={styles.historyHeader}>
+                  <Text style={styles.historyValue}>
+                    {item.systolic}/{item.diastolic} mmHg
+                  </Text>
+                  <View
+                    style={[
+                      styles.historyCategory,
+                      { backgroundColor: getBPCategory(item.systolic, item.diastolic).color },
+                    ]}
+                  >
+                    <Text style={styles.historyCategoryText}>
+                      {getBPCategory(item.systolic, item.diastolic).category}
                     </Text>
-                    <View
-                      style={[
-                        styles.historyCategory,
-                        { backgroundColor: getBPCategory(item.systolic, item.diastolic).color },
-                      ]}
-                    >
-                      <Text style={styles.historyCategoryText}>
-                        {getBPCategory(item.systolic, item.diastolic).category}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.historyDetails}>
-                    {item.heart_rate && (
-                      <Text style={styles.historyDetail}>Pulse: {item.heart_rate} bpm</Text>
-                    )}
-                    <Text style={styles.historyDetail}>
-                      {new Date(item.timestamp).toLocaleString()}
-                    </Text>
-                    {item.notes && <Text style={styles.historyNotes}>{item.notes}</Text>}
                   </View>
                 </View>
-                <View style={styles.historyActions}>
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.editButton]}
-                    onPress={() => {
-                      setEditingReading(item);
-                      setSystolic(item.systolic.toString());
-                      setDiastolic(item.diastolic.toString());
-                      setHeartRate(item.heart_rate?.toString() || '');
-                      setNotes(item.notes || '');
-                      setDate(item.timestamp);
-                      setIsEditMode(true);
-                      setIsVisible(true);
-                    }}
-                  >
-                    <Text style={styles.actionButtonText}>✏️ Edit</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.deleteButton]}
-                    onPress={() => {
-                      Alert.alert(
-                        'Delete Reading',
-                        'Are you sure you want to delete this blood pressure reading?',
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          {
-                            text: 'Delete',
-                            style: 'destructive',
-                            onPress: () => {
-                              setReadings(readings.filter((r) => r.id !== item.id));
-                              onDelete?.(item.id);
-                              Alert.alert('Success', 'Reading deleted successfully');
-                            },
-                          },
-                        ],
-                      );
-                    }}
-                  >
-                    <Text style={styles.actionButtonText}>🗑️</Text>
-                  </TouchableOpacity>
+                <View style={styles.historyDetails}>
+                  {item.heart_rate && (
+                    <Text style={styles.historyDetail}>Pulse: {item.heart_rate} bpm</Text>
+                  )}
+                  <Text style={styles.historyDetail}>
+                    {new Date(item.timestamp).toLocaleString()}
+                  </Text>
+                  {item.notes && <Text style={styles.historyNotes}>{item.notes}</Text>}
                 </View>
               </View>
-            )}
-            showsVerticalScrollIndicator={false}
-          />
+              <View style={styles.historyActions}>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.editButton]}
+                  onPress={() => {
+                    setEditingReading(item);
+                    setSystolic(item.systolic.toString());
+                    setDiastolic(item.diastolic.toString());
+                    setHeartRate(item.heart_rate?.toString() || '');
+                    setDate(item.timestamp.split('T')[0]);
+                    setNotes(item.notes || '');
+                    setIsEditMode(true);
+                    setIsVisible(true);
+                  }}
+                >
+                  <Text style={styles.actionButtonText}>✏️ Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.deleteButton]}
+                  onPress={() => {
+                    Alert.alert(
+                      'Delete Reading',
+                      'Are you sure you want to delete this blood pressure reading?',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: () => handleDelete(item.id),
+                        },
+                      ]
+                    );
+                  }}
+                >
+                  <Text style={styles.actionButtonText}>🗑️</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
         )}
       </Card>
 
@@ -346,13 +409,25 @@ const BloodPressureLogger: React.FC<BloodPressureLoggerProps> = ({ onLog, onEdit
 
               <View style={styles.inputSection}>
                 <Text style={styles.inputLabel}>Date</Text>
-                <TextInput
+                <TouchableOpacity
                   style={[styles.input, errors.date && styles.inputError]}
-                  value={date}
-                  onChangeText={setDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#999999"
-                />
+                  onPress={() => setShowDatePicker(true)}
+                >
+                  <Text style={styles.inputText}>{date || 'Select date'}</Text>
+                </TouchableOpacity>
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={date ? new Date(date) : new Date()}
+                    mode="date"
+                    display="default"
+                    onChange={(event, selectedDate) => {
+                      setShowDatePicker(false);
+                      if (selectedDate) {
+                        setDate(selectedDate.toISOString().split('T')[0]);
+                      }
+                    }}
+                  />
+                )}
                 {errors.date && <Text style={styles.errorText}>{errors.date}</Text>}
               </View>
 
@@ -394,7 +469,17 @@ const BloodPressureLogger: React.FC<BloodPressureLoggerProps> = ({ onLog, onEdit
               <View style={styles.buttonContainer}>
                 <TouchableOpacity
                   style={[styles.button, styles.cancelButton]}
-                  onPress={() => setIsVisible(false)}
+                  onPress={() => {
+                    setIsVisible(false);
+                    setIsEditMode(false);
+                    setEditingReading(null);
+                    setSystolic('');
+                    setDiastolic('');
+                    setHeartRate('');
+                    setDate(new Date().toISOString().split('T')[0]);
+                    setNotes('');
+                    setErrors({});
+                  }}
                 >
                   <Text style={styles.cancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
@@ -431,10 +516,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333333',
     marginBottom: 4,
+    fontFamily: 'Inter-Bold',
   },
   subtitle: {
     fontSize: 14,
     color: '#666666',
+    fontFamily: 'Inter-Regular',
   },
   logButton: {
     backgroundColor: '#4CAF50',
@@ -448,6 +535,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
   quickInfo: {
     backgroundColor: '#F8F9FA',
@@ -459,11 +547,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
     marginBottom: 8,
+    fontFamily: 'Inter-Bold',
   },
   quickInfoItem: {
     fontSize: 13,
     color: '#666666',
     marginBottom: 2,
+    fontFamily: 'Inter-Regular',
   },
   modalOverlay: {
     flex: 1,
@@ -473,7 +563,7 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 12,
     width: '92%',
     maxHeight: '85%',
     shadowColor: '#000',
@@ -495,6 +585,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#333333',
+    fontFamily: 'Inter-Bold',
   },
   closeButton: {
     fontSize: 24,
@@ -514,6 +605,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
     marginBottom: 8,
+    fontFamily: 'Inter-Bold',
   },
   input: {
     borderWidth: 1,
@@ -524,6 +616,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#FAFAFA',
     color: '#333333',
+    fontFamily: 'Inter-Regular',
+  },
+  inputText: {
+    fontSize: 16,
+    color: '#333333',
+    fontFamily: 'Inter-Regular',
   },
   inputError: {
     borderColor: '#FF5252',
@@ -534,6 +632,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 6,
     marginLeft: 4,
+    fontFamily: 'Inter-Regular',
   },
   notesInput: {
     height: 80,
@@ -567,6 +666,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2E7D32',
     marginBottom: 12,
+    fontFamily: 'Inter-Bold',
   },
   previewContent: {
     flexDirection: 'row',
@@ -578,6 +678,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#2E7D32',
+    fontFamily: 'Inter-Bold',
   },
   previewStatus: {
     paddingHorizontal: 12,
@@ -589,11 +690,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#FFFFFF',
     letterSpacing: 0.5,
+    fontFamily: 'Inter-Bold',
   },
   previewType: {
     fontSize: 14,
     color: '#2E7D32',
     fontWeight: '500',
+    fontFamily: 'Inter-Regular',
   },
   buttonContainer: {
     flexDirection: 'row',
@@ -620,11 +723,13 @@ const styles = StyleSheet.create({
     color: '#666666',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
   saveButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
   noHistoryContainer: {
     alignItems: 'center',
@@ -641,12 +746,14 @@ const styles = StyleSheet.create({
     color: '#333333',
     marginBottom: 8,
     textAlign: 'center',
+    fontFamily: 'Inter-Bold',
   },
   noHistoryText: {
     fontSize: 14,
     color: '#666666',
     textAlign: 'center',
     lineHeight: 20,
+    fontFamily: 'Inter-Regular',
   },
   historyItem: {
     backgroundColor: '#FFFFFF',
@@ -675,6 +782,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#333333',
+    fontFamily: 'Inter-Bold',
   },
   historyCategory: {
     paddingHorizontal: 8,
@@ -685,6 +793,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     color: '#FFFFFF',
+    fontFamily: 'Inter-Bold',
   },
   historyDetails: {
     marginTop: 4,
@@ -693,6 +802,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666666',
     marginBottom: 2,
+    fontFamily: 'Inter-Regular',
   },
   historyNotes: {
     fontSize: 13,
@@ -702,6 +812,7 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#F0F0F0',
+    fontFamily: 'Inter-Regular',
   },
   historyActions: {
     flexDirection: 'row',
@@ -723,6 +834,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
 });
 

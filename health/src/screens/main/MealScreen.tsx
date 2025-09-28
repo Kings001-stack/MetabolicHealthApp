@@ -6,13 +6,17 @@ import {
   ScrollView,
   TouchableOpacity,
   Image,
+  Alert,
+  FlatList,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Card from '@/components/common/Card';
 import Button from '@/components/common/Button';
 import Input from '@/components/common/Input';
+import SuccessOverlay from '@/components/common/SuccessOverlay';
 import AuthenticationService from '@/services/auth/AuthenticationService';
-import MealService, { DailyTotals } from '@/services/meals/MealService';
+import MealService, { DailyTotals, Meal, MealItem } from '@/services/meals/MealService';
 import NutritionService, { NutritionSearchItem } from '@/services/nutrition/NutritionService';
 
 interface MealPlan {
@@ -39,6 +43,14 @@ const MealScreen: React.FC = () => {
   const [foodSearchResults, setFoodSearchResults] = useState<NutritionSearchItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [dailyTotals, setDailyTotals] = useState<DailyTotals>({ calories: 0, carbs: 0, protein: 0, fat: 0 });
+  
+  // Success overlay state
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  // Recent meals state
+  const [recentMeals, setRecentMeals] = useState<Meal[]>([]);
+  const [recentMealItems, setRecentMealItems] = useState<MealItem[]>([]);
 
   useEffect(() => {
     const init = async () => {
@@ -53,6 +65,10 @@ const MealScreen: React.FC = () => {
           // Load daily nutrition totals
           const totals = await MealService.getDailyTotals(user.id);
           setDailyTotals(totals);
+          
+          // Load recent meals
+          const meals = await MealService.listMealsByDate(user.id);
+          setRecentMeals(meals);
         } catch (e) {
           // Keep default if load fails
         }
@@ -133,8 +149,10 @@ const MealScreen: React.FC = () => {
       if (currentUserId) {
         try {
           await MealService.saveHydration(currentUserId, next * GLASS_ML);
+          setSuccessMessage(`Added glass of water! ${next}/${dailyWaterGoal} glasses`);
+          setShowSuccess(true);
         } catch (e) {
-          // Optional: show a toast/alert in future
+          Alert.alert('Error', 'Failed to save hydration data');
         }
       }
     }
@@ -147,8 +165,10 @@ const MealScreen: React.FC = () => {
       if (currentUserId) {
         try {
           await MealService.saveHydration(currentUserId, next * GLASS_ML);
+          setSuccessMessage(`Removed glass of water. ${next}/${dailyWaterGoal} glasses`);
+          setShowSuccess(true);
         } catch (e) {
-          // Optional: show a toast/alert in future
+          Alert.alert('Error', 'Failed to save hydration data');
         }
       }
     }
@@ -191,9 +211,15 @@ const MealScreen: React.FC = () => {
         fat: details.labelNutrients?.fat?.value || 0,
       });
       
-      // Refresh daily totals
+      // Refresh daily totals and recent meals
       const totals = await MealService.getDailyTotals(currentUserId);
       setDailyTotals(totals);
+      const meals = await MealService.listMealsByDate(currentUserId);
+      setRecentMeals(meals);
+      
+      // Show success overlay
+      setSuccessMessage(`Added ${details.description} to your meal log`);
+      setShowSuccess(true);
       
       // Clear search
       setSearchQuery('');
@@ -265,21 +291,41 @@ const MealScreen: React.FC = () => {
         <Text style={styles.sectionTitle}>Daily Nutrition Summary</Text>
         <View style={styles.nutritionSummary}>
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>1120</Text>
+            <Text style={styles.summaryValue}>{dailyTotals.calories.toFixed(0)}</Text>
             <Text style={styles.summaryLabel}>Total Calories</Text>
             <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { width: '70%' }]} />
+              <View style={[styles.progressFill, { width: `${Math.min((dailyTotals.calories / 2000) * 100, 100)}%` }]} />
             </View>
           </View>
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>80g</Text>
+            <Text style={styles.summaryValue}>{dailyTotals.carbs.toFixed(1)}g</Text>
             <Text style={styles.summaryLabel}>Carbohydrates</Text>
             <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { width: '60%' }]} />
+              <View style={[styles.progressFill, { width: `${Math.min((dailyTotals.carbs / 250) * 100, 100)}%` }]} />
             </View>
           </View>
         </View>
       </Card>
+      
+      {recentMeals.length > 0 && (
+        <Card style={styles.recentMealsCard}>
+          <Text style={styles.sectionTitle}>Recent Meals</Text>
+          <Text style={styles.sectionSubtitle}>Your logged meals today</Text>
+          {recentMeals.slice(0, 3).map((meal) => (
+            <TouchableOpacity key={meal.id} style={styles.recentMealItem}>
+              <View style={styles.recentMealInfo}>
+                <Text style={styles.recentMealName}>{meal.name}</Text>
+                <Text style={styles.recentMealDate}>
+                  {new Date(meal.created_at || meal.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </Text>
+              </View>
+              <View style={styles.recentMealNutrition}>
+                <Text style={styles.recentMealCalories}>{meal.total_calories?.toFixed(0) || '0'} cal</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </Card>
+      )}
     </View>
   );
 
@@ -474,7 +520,7 @@ const MealScreen: React.FC = () => {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Nutrition & Meals</Text>
@@ -521,7 +567,13 @@ const MealScreen: React.FC = () => {
         
         <View style={styles.bottomSpacing} />
       </ScrollView>
-    </View>
+      
+      <SuccessOverlay
+        visible={showSuccess}
+        message={successMessage}
+        onHide={() => setShowSuccess(false)}
+      />
+    </SafeAreaView>
   );
 };
 
@@ -925,6 +977,38 @@ const styles = StyleSheet.create({
   },
   bottomSpacing: {
     height: 20,
+  },
+  recentMealsCard: {
+    marginBottom: 16,
+  },
+  recentMealItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  recentMealInfo: {
+    flex: 1,
+  },
+  recentMealName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333333',
+    marginBottom: 4,
+  },
+  recentMealDate: {
+    fontSize: 12,
+    color: '#666666',
+  },
+  recentMealNutrition: {
+    alignItems: 'flex-end',
+  },
+  recentMealCalories: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#4CAF50',
   },
 });
 

@@ -24,9 +24,11 @@ import MedicationScreen from "@/screens/medication/MedicationScreen";
 import BloodSugarScreen from "@/screens/blood-sugar/BloodSugarScreen";
 import WeeklyPlanScreen from "@/screens/weekly-plan/WeeklyPlanScreen";
 import MealRecipesScreen from "@/screens/meal-recipes/MealRecipesScreen";
+import EducationTopicScreen from "@/screens/education-topic/EducationTopicScreen";
 import BloodPressureScreen from "@/screens/blood-pressure/BloodPressureScreen";
 import WeightScreen from "@/screens/weight/WeightScreen";
-import EducationTopicScreen from "@/screens/education-topic/EducationTopicScreen";
+import GameScreen from "@/screens/gamification/GameScreen";
+import HealthQuizGame from "@/screens/gamification/HealthQuizGame";
 
 // Types
 import { RootStackParamList } from "@/types";
@@ -247,6 +249,8 @@ const AppNavigator: React.FC = () => {
         <Stack.Screen name="BloodPressure" component={BloodPressureScreen} />
         <Stack.Screen name="Weight" component={WeightScreen} />
         <Stack.Screen name="EducationTopic" component={EducationTopicScreen} />
+        <Stack.Screen name="GameScreen" component={GameScreen} />
+        <Stack.Screen name="HealthQuizGame" component={HealthQuizGame} />
         </>
       )}
     </Stack.Navigator>

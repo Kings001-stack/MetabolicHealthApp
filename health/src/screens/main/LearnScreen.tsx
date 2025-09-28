@@ -9,12 +9,14 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Card from '@/components/common/Card';
 import Input from '@/components/common/Input';
 import Alert from '@/components/common/Alert';
 import AuthenticationService from '@/services/auth/AuthenticationService';
 import DatabaseService from '@/database/DatabaseService';
 import { User } from '@/database/repositories/UserRepository';
+import { RootStackParamList } from '@/types';
 
 interface EducationTopic {
   id: string;
@@ -37,8 +39,29 @@ interface UserHealthProfile {
   readingLevel: 'beginner' | 'intermediate' | 'advanced';
 }
 
+interface LearningProgress {
+  totalTopicsRead: number;
+  streakDays: number;
+  lastReadDate: string;
+  pointsEarned: number;
+  level: number;
+  badges: string[];
+  weeklyGoal: number;
+  weeklyProgress: number;
+}
+
+interface Achievement {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  points: number;
+  unlocked: boolean;
+  unlockedDate?: string;
+}
+
 const LearnScreen: React.FC = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -47,6 +70,18 @@ const LearnScreen: React.FC = () => {
   const [featuredTopic, setFeaturedTopic] = useState<EducationTopic | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [bookmarkedTopics, setBookmarkedTopics] = useState<string[]>([]);
+  const [learningProgress, setLearningProgress] = useState<LearningProgress>({
+    totalTopicsRead: 0,
+    streakDays: 0,
+    lastReadDate: '',
+    pointsEarned: 0,
+    level: 1,
+    badges: [],
+    weeklyGoal: 3,
+    weeklyProgress: 0,
+  });
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [showAchievement, setShowAchievement] = useState<Achievement | null>(null);
 
   useEffect(() => {
     loadUserDataAndTopics();
@@ -62,6 +97,8 @@ const LearnScreen: React.FC = () => {
           loadUserHealthProfile(user.id),
           loadEducationTopics(user.id),
           loadBookmarkedTopics(user.id),
+          loadLearningProgress(user.id),
+          loadAchievements(user.id),
         ]);
       }
     } catch (error) {
@@ -125,6 +162,213 @@ const LearnScreen: React.FC = () => {
       setBookmarkedTopics(bookmarks.map(b => b.topic_id));
     } catch (error) {
       console.error('Failed to load bookmarks:', error);
+      // Set empty bookmarks if table doesn't exist yet
+      setBookmarkedTopics([]);
+    }
+  };
+
+  const loadLearningProgress = async (userId: string) => {
+    try {
+      const progressData = await DatabaseService.executeQuery<LearningProgress>(
+        'SELECT * FROM learning_progress WHERE user_id = ?',
+        [userId]
+      );
+
+      if (progressData.length > 0) {
+        const progress = progressData[0];
+
+        // Calculate current streak
+        const today = new Date().toISOString().split('T')[0];
+        const lastRead = new Date(progress.lastReadDate).toISOString().split('T')[0];
+        const daysDiff = Math.floor((new Date(today).getTime() - new Date(lastRead).getTime()) / (1000 * 60 * 60 * 24));
+
+        if (daysDiff > 1) {
+          progress.streakDays = 0; // Reset streak if more than 1 day gap
+        }
+
+        // Calculate weekly progress
+        const weekStart = new Date();
+        weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+        const weeklyReads = await DatabaseService.executeQuery<{count: number}>(
+          'SELECT COUNT(*) as count FROM topic_views WHERE user_id = ? AND viewed_at >= ?',
+          [userId, weekStart.toISOString()]
+        );
+        progress.weeklyProgress = weeklyReads[0]?.count || 0;
+
+        setLearningProgress(progress);
+      }
+    } catch (error) {
+      console.error('Failed to load learning progress:', error);
+      // Set default progress if table doesn't exist yet
+      setLearningProgress({
+        totalTopicsRead: 0,
+        streakDays: 0,
+        lastReadDate: '',
+        pointsEarned: 0,
+        level: 1,
+        badges: [],
+        weeklyGoal: 3,
+        weeklyProgress: 0,
+      });
+    }
+  };
+
+  const loadAchievements = async (userId: string) => {
+    try {
+      // Get user's unlocked achievements
+      const unlockedAchievements = await DatabaseService.executeQuery<{achievement_id: string, unlocked_date: string}>(
+        'SELECT achievement_id, unlocked_date FROM user_achievements WHERE user_id = ?',
+        [userId]
+      );
+
+      const unlockedIds = unlockedAchievements.map(a => a.achievement_id);
+      
+      // Define all possible achievements
+      const allAchievements: Achievement[] = [
+        {
+          id: 'first_read',
+          title: 'Knowledge Seeker',
+          description: 'Read your first health topic',
+          icon: '📚',
+          points: 10,
+          unlocked: unlockedIds.includes('first_read'),
+        },
+        {
+          id: 'streak_3',
+          title: 'Learning Streak',
+          description: 'Read topics for 3 days in a row',
+          icon: '🔥',
+          points: 25,
+          unlocked: unlockedIds.includes('streak_3'),
+        },
+        {
+          id: 'streak_7',
+          title: 'Knowledge Warrior',
+          description: 'Maintain a 7-day learning streak',
+          icon: '⚡',
+          points: 50,
+          unlocked: unlockedIds.includes('streak_7'),
+        },
+        {
+          id: 'topics_10',
+          title: 'Health Scholar',
+          description: 'Read 10 different topics',
+          icon: '🎓',
+          points: 75,
+          unlocked: unlockedIds.includes('topics_10'),
+        },
+        {
+          id: 'weekly_goal',
+          title: 'Goal Crusher',
+          description: 'Complete your weekly reading goal',
+          icon: '🎯',
+          points: 30,
+          unlocked: unlockedIds.includes('weekly_goal'),
+        },
+        {
+          id: 'bookmark_master',
+          title: 'Bookmark Master',
+          description: 'Bookmark 5 topics for later',
+          icon: '🔖',
+          points: 20,
+          unlocked: unlockedIds.includes('bookmark_master'),
+        },
+        {
+          id: 'category_explorer',
+          title: 'Category Explorer',
+          description: 'Read topics from all categories',
+          icon: '🗺️',
+          points: 40,
+          unlocked: unlockedIds.includes('category_explorer'),
+        },
+        {
+          id: 'level_5',
+          title: 'Health Expert',
+          description: 'Reach level 5 in learning',
+          icon: '👑',
+          points: 100,
+          unlocked: unlockedIds.includes('level_5'),
+        },
+      ];
+
+      // Add unlock dates
+      allAchievements.forEach(achievement => {
+        const unlockedData = unlockedAchievements.find(u => u.achievement_id === achievement.id);
+        if (unlockedData) {
+          achievement.unlockedDate = unlockedData.unlocked_date;
+        }
+      });
+
+      setAchievements(allAchievements);
+    } catch (error) {
+      console.error('Failed to load achievements:', error);
+      // Set default achievements if table doesn't exist yet
+      setAchievements([
+        {
+          id: 'first_read',
+          title: 'Knowledge Seeker',
+          description: 'Read your first health topic',
+          icon: '📚',
+          points: 10,
+          unlocked: false,
+        },
+        {
+          id: 'streak_3',
+          title: 'Learning Streak',
+          description: 'Read topics for 3 days in a row',
+          icon: '🔥',
+          points: 25,
+          unlocked: false,
+        },
+        {
+          id: 'streak_7',
+          title: 'Knowledge Warrior',
+          description: 'Maintain a 7-day learning streak',
+          icon: '⚡',
+          points: 50,
+          unlocked: false,
+        },
+        {
+          id: 'topics_10',
+          title: 'Health Scholar',
+          description: 'Read 10 different topics',
+          icon: '🎓',
+          points: 75,
+          unlocked: false,
+        },
+        {
+          id: 'weekly_goal',
+          title: 'Goal Crusher',
+          description: 'Complete your weekly reading goal',
+          icon: '🎯',
+          points: 30,
+          unlocked: false,
+        },
+        {
+          id: 'bookmark_master',
+          title: 'Bookmark Master',
+          description: 'Bookmark 5 topics for later',
+          icon: '🔖',
+          points: 20,
+          unlocked: false,
+        },
+        {
+          id: 'category_explorer',
+          title: 'Category Explorer',
+          description: 'Read topics from all categories',
+          icon: '🗺️',
+          points: 40,
+          unlocked: false,
+        },
+        {
+          id: 'level_5',
+          title: 'Health Expert',
+          description: 'Reach level 5 in learning',
+          icon: '👑',
+          points: 100,
+          unlocked: false,
+        },
+      ]);
     }
   };
 
@@ -263,18 +507,178 @@ const LearnScreen: React.FC = () => {
         'INSERT INTO topic_views (user_id, topic_id, viewed_at) VALUES (?, ?, ?)',
         [currentUser.id, topic.id, new Date().toISOString()]
       );
+      // Update learning progress
+      await updateLearningProgress(topic);
 
       // Navigate to topic detail
-      (navigation as any).navigate('EducationTopic', { 
+      navigation.navigate('EducationTopic', {
         topic: {
           ...topic,
           views: (topic.views || 0) + 1,
-        }
+        },
       });
     } catch (error) {
       console.error('Failed to track topic view:', error);
-      // Still navigate even if tracking fails
-      (navigation as any).navigate('EducationTopic', { topic });
+      navigation.navigate('EducationTopic', { topic });
+    }
+  };
+
+  const updateLearningProgress = async (topic: EducationTopic) => {
+    if (!currentUser) return;
+
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+      // Calculate new streak
+      let newStreak = learningProgress.streakDays;
+      if (learningProgress.lastReadDate === yesterdayStr) {
+        newStreak += 1; // Continue streak
+      } else if (learningProgress.lastReadDate !== today) {
+        newStreak = 1; // Start new streak
+      }
+
+      // Calculate points based on difficulty
+      const difficultyPoints = {
+        beginner: 5,
+        intermediate: 10,
+        advanced: 15,
+      };
+      const newPoints = learningProgress.pointsEarned + difficultyPoints[topic.difficulty];
+
+      // Calculate level (every 100 points = 1 level)
+      const newLevel = Math.floor(newPoints / 100) + 1;
+
+      const updatedProgress: LearningProgress = {
+        ...learningProgress,
+        totalTopicsRead: learningProgress.totalTopicsRead + 1,
+        streakDays: newStreak,
+        lastReadDate: today,
+        pointsEarned: newPoints,
+        level: newLevel,
+        weeklyProgress: learningProgress.weeklyProgress + 1,
+      };
+
+      // Update database
+      await DatabaseService.executeUpdate(
+        `INSERT OR REPLACE INTO learning_progress
+         (user_id, total_topics_read, streak_days, last_read_date, points_earned, level, weekly_goal, weekly_progress)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          currentUser.id,
+          updatedProgress.totalTopicsRead,
+          updatedProgress.streakDays,
+          updatedProgress.lastReadDate,
+          updatedProgress.pointsEarned,
+          updatedProgress.level,
+          updatedProgress.weeklyGoal,
+          updatedProgress.weeklyProgress,
+        ]
+      );
+
+      setLearningProgress(updatedProgress);
+
+      // Check for new achievements
+      await checkForNewAchievements(updatedProgress);
+
+    } catch (error) {
+      console.error('Failed to update learning progress:', error);
+      // If database tables don't exist yet, just update local state
+      const today = new Date().toISOString().split('T')[0];
+      const difficultyPoints = {
+        beginner: 5,
+        intermediate: 10,
+        advanced: 15,
+      };
+      const newPoints = learningProgress.pointsEarned + difficultyPoints[topic.difficulty];
+      const newLevel = Math.floor(newPoints / 100) + 1;
+
+      const updatedProgress: LearningProgress = {
+        ...learningProgress,
+        totalTopicsRead: learningProgress.totalTopicsRead + 1,
+        streakDays: learningProgress.streakDays + 1,
+        lastReadDate: today,
+        pointsEarned: newPoints,
+        level: newLevel,
+        weeklyProgress: learningProgress.weeklyProgress + 1,
+      };
+
+      setLearningProgress(updatedProgress);
+    }
+  };
+
+  const checkForNewAchievements = async (progress: LearningProgress) => {
+    if (!currentUser) return;
+
+    const newAchievements: string[] = [];
+
+    // Check each achievement condition
+    if (progress.totalTopicsRead >= 1 && !achievements.find(a => a.id === 'first_read')?.unlocked) {
+      newAchievements.push('first_read');
+    }
+    if (progress.streakDays >= 3 && !achievements.find(a => a.id === 'streak_3')?.unlocked) {
+      newAchievements.push('streak_3');
+    }
+    if (progress.streakDays >= 7 && !achievements.find(a => a.id === 'streak_7')?.unlocked) {
+      newAchievements.push('streak_7');
+    }
+    if (progress.totalTopicsRead >= 10 && !achievements.find(a => a.id === 'topics_10')?.unlocked) {
+      newAchievements.push('topics_10');
+    }
+    if (progress.weeklyProgress >= progress.weeklyGoal && !achievements.find(a => a.id === 'weekly_goal')?.unlocked) {
+      newAchievements.push('weekly_goal');
+    }
+    if (bookmarkedTopics.length >= 5 && !achievements.find(a => a.id === 'bookmark_master')?.unlocked) {
+      newAchievements.push('bookmark_master');
+    }
+    if (progress.level >= 5 && !achievements.find(a => a.id === 'level_5')?.unlocked) {
+      newAchievements.push('level_5');
+    }
+
+    // Unlock new achievements
+    for (const achievementId of newAchievements) {
+      try {
+        await DatabaseService.executeUpdate(
+          'INSERT INTO user_achievements (user_id, achievement_id, unlocked_date) VALUES (?, ?, ?)',
+          [currentUser.id, achievementId, new Date().toISOString()]
+        );
+
+        // Update local state
+        setAchievements(prev => 
+          prev.map(a => 
+            a.id === achievementId 
+              ? { ...a, unlocked: true, unlockedDate: new Date().toISOString() }
+              : a
+          )
+        );
+
+        // Show achievement popup
+        const achievement = achievements.find(a => a.id === achievementId);
+        if (achievement) {
+          setShowAchievement({ ...achievement, unlocked: true });
+          setTimeout(() => setShowAchievement(null), 3000);
+        }
+
+      } catch (error) {
+        console.error('Failed to unlock achievement:', error);
+        // If database tables don't exist yet, just update local state
+        setAchievements(prev =>
+          prev.map(a =>
+            a.id === achievementId
+              ? { ...a, unlocked: true, unlockedDate: new Date().toISOString() }
+              : a
+          )
+        );
+
+        // Show achievement popup
+        const achievement = achievements.find(a => a.id === achievementId);
+        if (achievement) {
+          setShowAchievement({ ...achievement, unlocked: true });
+          setTimeout(() => setShowAchievement(null), 3000);
+        }
+      }
     }
   };
 
@@ -346,11 +750,23 @@ const LearnScreen: React.FC = () => {
   };
 
   return (
+    <>
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Health Education</Text>
-        <Text style={styles.subtitle}>Learn to manage your health better</Text>
+        <View style={styles.headerContent}>
+          <View>
+            <Text style={styles.title}>Health Education</Text>
+            <Text style={styles.subtitle}>Learn to manage your health better</Text>
+          </View>
+          <TouchableOpacity 
+            style={styles.gameButton}
+            onPress={() => navigation.navigate('GameScreen')}
+          >
+            <Text style={styles.gameButtonIcon}>🎮</Text>
+            <Text style={styles.gameButtonText}>Games</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Search */}
@@ -361,6 +777,68 @@ const LearnScreen: React.FC = () => {
           onChangeText={setSearchQuery}
           style={styles.searchInput}
         />
+      </Card>
+
+      {/* Learning Progress Dashboard */}
+      <Card style={styles.progressCard}>
+        <View style={styles.progressHeader}>
+          <Text style={styles.progressTitle}>Your Learning Journey</Text>
+          <Text style={styles.levelBadge}>Level {learningProgress.level}</Text>
+        </View>
+        
+        <View style={styles.statsRow}>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{learningProgress.totalTopicsRead}</Text>
+            <Text style={styles.statLabel}>Topics Read</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{learningProgress.streakDays}</Text>
+            <Text style={styles.statLabel}>Day Streak 🔥</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{learningProgress.pointsEarned}</Text>
+            <Text style={styles.statLabel}>Points</Text>
+          </View>
+        </View>
+
+        {/* Weekly Goal Progress */}
+        <View style={styles.weeklyGoal}>
+          <View style={styles.goalHeader}>
+            <Text style={styles.goalTitle}>Weekly Goal</Text>
+            <Text style={styles.goalProgress}>
+              {learningProgress.weeklyProgress}/{learningProgress.weeklyGoal}
+            </Text>
+          </View>
+          <View style={styles.progressBar}>
+            <View 
+              style={[
+                styles.progressFill, 
+                { width: `${Math.min((learningProgress.weeklyProgress / learningProgress.weeklyGoal) * 100, 100)}%` }
+              ]} 
+            />
+          </View>
+        </View>
+
+        {/* Recent Achievements */}
+        <View style={styles.achievementsPreview}>
+          <Text style={styles.achievementsTitle}>Recent Achievements</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {achievements
+              .filter(a => a.unlocked)
+              .sort((a, b) => new Date(b.unlockedDate || '').getTime() - new Date(a.unlockedDate || '').getTime())
+              .slice(0, 3)
+              .map((achievement) => (
+                <View key={achievement.id} style={styles.achievementBadge}>
+                  <Text style={styles.achievementIcon}>{achievement.icon}</Text>
+                  <Text style={styles.achievementTitle}>{achievement.title}</Text>
+                  <Text style={styles.achievementPoints}>+{achievement.points}pts</Text>
+                </View>
+              ))}
+            {achievements.filter(a => a.unlocked).length === 0 && (
+              <Text style={styles.noAchievements}>Complete your first topic to earn achievements!</Text>
+            )}
+          </ScrollView>
+        </View>
       </Card>
 
       {/* Red Flags Alert */}
@@ -548,6 +1026,20 @@ const LearnScreen: React.FC = () => {
 
       <View style={styles.bottomSpacing} />
     </ScrollView>
+
+    {/* Achievement Popup */}
+    {showAchievement && (
+      <View style={styles.achievementPopup}>
+        <View style={styles.achievementPopupContent}>
+          <Text style={styles.achievementPopupIcon}>{showAchievement.icon}</Text>
+          <Text style={styles.achievementPopupTitle}>Achievement Unlocked!</Text>
+          <Text style={styles.achievementPopupName}>{showAchievement.title}</Text>
+          <Text style={styles.achievementPopupDescription}>{showAchievement.description}</Text>
+          <Text style={styles.achievementPopupPoints}>+{showAchievement.points} points</Text>
+        </View>
+      </View>
+    )}
+    </>
   );
 };
 
@@ -571,6 +1063,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 60,
     paddingBottom: 20,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  gameButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  gameButtonIcon: {
+    fontSize: 16,
+    marginRight: 6,
+  },
+  gameButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   title: {
     fontSize: 28,
@@ -863,6 +1382,181 @@ const styles = StyleSheet.create({
   },
   bottomSpacing: {
     height: 20,
+  },
+  // Gamification Styles
+  progressCard: {
+    marginHorizontal: 20,
+    marginBottom: 16,
+    backgroundColor: '#E8F5E8',
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CAF50',
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  progressTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+  },
+  levelBadge: {
+    backgroundColor: '#4CAF50',
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 20,
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#4CAF50',
+    marginTop: 4,
+  },
+  weeklyGoal: {
+    marginBottom: 20,
+  },
+  goalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  goalTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2E7D32',
+  },
+  goalProgress: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  progressBar: {
+    height: 8,
+    backgroundColor: '#C8E6C9',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#4CAF50',
+    borderRadius: 4,
+  },
+  achievementsPreview: {
+    marginTop: 4,
+  },
+  achievementsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2E7D32',
+    marginBottom: 12,
+  },
+  achievementBadge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginRight: 12,
+    alignItems: 'center',
+    minWidth: 100,
+    borderWidth: 2,
+    borderColor: '#4CAF50',
+  },
+  achievementIcon: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  achievementTitle: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  achievementPoints: {
+    fontSize: 10,
+    color: '#4CAF50',
+    fontWeight: '600',
+  },
+  noAchievements: {
+    fontSize: 14,
+    color: '#666666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  // Achievement Popup Styles
+  achievementPopup: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  achievementPopupContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 32,
+    alignItems: 'center',
+    marginHorizontal: 40,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  achievementPopupIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  achievementPopupTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    marginBottom: 8,
+  },
+  achievementPopupName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333333',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  achievementPopupDescription: {
+    fontSize: 14,
+    color: '#666666',
+    textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  achievementPopupPoints: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    backgroundColor: '#E8F5E8',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
 });
 

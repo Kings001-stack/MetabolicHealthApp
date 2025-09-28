@@ -305,7 +305,6 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     marginHorizontal: 6,
-    transition: 'all 0.3s ease',
   },
   activeDot: {
     width: 32,

@@ -303,7 +303,7 @@ const MedicationLogger: React.FC<MedicationLoggerProps> = ({ onLog, onAddMedicat
     setErrors({});
     setIsAddModalVisible(false);
 
-    Alert.alert('Success', `Medication ${medication.name} added successfully!`);
+    // Success UI is handled by parent screen via onAddMedication
   };
 
   const handleLogDose = () => {
@@ -320,14 +320,14 @@ const MedicationLogger: React.FC<MedicationLoggerProps> = ({ onLog, onAddMedicat
     };
 
     setLogs([...logs, log]);
-    onLog(log);
 
     setSelectedMedicationId(null);
     setNotes('');
     setSkipped(false);
     setIsLogModalVisible(false);
 
-    Alert.alert('Success', `Medication ${skipped ? 'skip' : 'intake'} logged successfully!`);
+    // Call onLog after all state updates to trigger screen success overlay
+    onLog(log);
   };
 
   const addScheduleTime = () => {
@@ -439,8 +439,8 @@ const MedicationLogger: React.FC<MedicationLoggerProps> = ({ onLog, onAddMedicat
                           timestamp: new Date().toISOString(),
                         };
                         setLogs([...logs, log]);
+                        // Call onLog after state update to trigger screen success overlay
                         onLog(log);
-                        Alert.alert('✅ Success', `${med.name} marked as taken!`);
                       }}
                     >
                       <Text style={styles.actionButtonText}>✓ Take</Text>
@@ -454,8 +454,8 @@ const MedicationLogger: React.FC<MedicationLoggerProps> = ({ onLog, onAddMedicat
                           timestamp: new Date().toISOString(),
                         };
                         setLogs([...logs, log]);
+                        // Call onLog after state update to trigger screen success overlay
                         onLog(log);
-                        Alert.alert('⏭️ Noted', `${med.name} marked as skipped.`);
                       }}
                     >
                       <Text style={styles.actionButtonText}>⏭ Skip</Text>

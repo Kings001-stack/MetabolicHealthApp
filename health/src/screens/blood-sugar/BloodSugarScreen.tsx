@@ -1,11 +1,11 @@
-
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Alert, FlatList, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import BloodSugarLogger from '@/components/tracking/BloodSugarLogger';
 import AuthenticationService from '@/services/auth/AuthenticationService';
 import DatabaseService from '@/database/DatabaseService';
 import { User } from '@/database/repositories/UserRepository';
+import SuccessOverlay from '@/components/common/SuccessOverlay';
 
 interface BloodSugarReading {
   id: string;
@@ -22,6 +22,8 @@ const BloodSugarScreen = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [recentReadings, setRecentReadings] = useState<BloodSugarReading[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string>('');
 
   useEffect(() => {
     loadUserAndReadings();
@@ -45,7 +47,8 @@ const BloodSugarScreen = () => {
   const loadRecentReadings = async (userId: string) => {
     try {
       const readings = await DatabaseService.executeQuery<BloodSugarReading>(
-        `SELECT * FROM blood_sugar_readings 
+        `SELECT id, user_id, value, meal_context as type, notes, timestamp, created_at, updated_at
+         FROM blood_sugar_readings 
          WHERE user_id = ? 
          ORDER BY timestamp DESC 
          LIMIT 5`,
@@ -79,7 +82,7 @@ const BloodSugarScreen = () => {
 
       await DatabaseService.executeUpdate(
         `INSERT INTO blood_sugar_readings 
-         (id, user_id, value, type, notes, timestamp, created_at, updated_at) 
+         (id, user_id, value, meal_context, notes, timestamp, created_at, updated_at) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           reading.id,
@@ -93,11 +96,8 @@ const BloodSugarScreen = () => {
         ]
       );
 
-      Alert.alert(
-        'Success',
-        `Blood sugar logged: ${data.value} mg/dL`,
-        [{ text: 'OK' }]
-      );
+      setSuccessMessage(`Blood sugar logged: ${data.value} mg/dL`);
+      setShowSuccess(true);
 
       // Reload recent readings
       await loadRecentReadings(currentUser.id);
@@ -122,52 +122,87 @@ const BloodSugarScreen = () => {
     return { category: 'High', color: '#F44336' };
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Log Blood Sugar</Text>
-          <Text style={styles.headerSubtitle}>
-            {currentUser ? `Welcome, ${currentUser.name}` : 'Please log in'}
+  const renderReading = ({ item }: { item: BloodSugarReading }) => {
+    const category = getBloodSugarCategory(item.value);
+    return (
+      <View style={styles.readingCard}>
+        <View style={styles.readingHeader}>
+          <Text style={styles.readingValue}>{item.value} mg/dL</Text>
+          <Text style={[styles.readingCategory, { color: category.color }]}>
+            {category.category}
           </Text>
         </View>
+        <Text style={styles.readingDate}>{formatDate(item.timestamp)}</Text>
+        {item.type && <Text style={styles.readingType}>Type: {item.type}</Text>}
+        {item.notes && <Text style={styles.readingNotes}>Notes: {item.notes}</Text>}
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={() => confirmDelete(item.id)}
+          >
+            <Text style={styles.deleteButtonText}>Delete</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
 
-        <BloodSugarLogger onLog={handleLogBloodSugar} />
+  const confirmDelete = (id: string) => {
+    Alert.alert(
+      'Delete Reading',
+      'Are you sure you want to delete this reading?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => handleDelete(id) },
+      ]
+    );
+  };
 
-        {recentReadings.length > 0 && (
-          <View style={styles.recentSection}>
-            <Text style={styles.recentTitle}>Recent Readings</Text>
-            {recentReadings.map((reading) => {
-              const category = getBloodSugarCategory(reading.value);
-              return (
-                <View key={reading.id} style={styles.readingCard}>
-                  <View style={styles.readingHeader}>
-                    <Text style={styles.readingValue}>
-                      {reading.value} mg/dL
-                    </Text>
-                    <Text style={[styles.readingCategory, { color: category.color }]}>
-                      {category.category}
-                    </Text>
-                  </View>
-                  <Text style={styles.readingDate}>
-                    {formatDate(reading.timestamp)}
-                  </Text>
-                  {reading.type && (
-                    <Text style={styles.readingType}>
-                      Type: {reading.type}
-                    </Text>
-                  )}
-                  {reading.notes && (
-                    <Text style={styles.readingNotes}>
-                      Notes: {reading.notes}
-                    </Text>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        )}
-      </ScrollView>
+  const handleDelete = async (id: string) => {
+    try {
+      await DatabaseService.executeUpdate(
+        'DELETE FROM blood_sugar_readings WHERE id = ?',
+        [id]
+      );
+      setSuccessMessage('Reading deleted');
+      setShowSuccess(true);
+      await loadRecentReadings(currentUser!.id);
+    } catch (error) {
+      console.error('Failed to delete blood sugar reading:', error);
+      Alert.alert('Error', 'Failed to delete blood sugar reading');
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <FlatList
+        data={recentReadings}
+        keyExtractor={(item) => item.id}
+        renderItem={renderReading}
+        ListHeaderComponent={
+          <>
+            <View style={styles.header}>
+              <Text style={styles.headerTitle}>Log Blood Sugar</Text>
+              <Text style={styles.headerSubtitle}>
+                {currentUser ? `Welcome, ${currentUser.name}` : 'Please log in'}
+              </Text>
+            </View>
+            <BloodSugarLogger onLog={handleLogBloodSugar} showHistory={false} />
+            {recentReadings.length > 0 && (
+              <View style={styles.recentSection}>
+                <Text style={styles.recentTitle}>Recent Readings</Text>
+              </View>
+            )}
+          </>
+        }
+        contentContainerStyle={{ paddingBottom: 20 }}
+        showsVerticalScrollIndicator={false}
+      />
+      <SuccessOverlay
+        visible={showSuccess}
+        message={successMessage}
+        onHide={() => setShowSuccess(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -244,6 +279,22 @@ const styles = StyleSheet.create({
     color: '#666666',
     fontStyle: 'italic',
   },
+  actionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 8,
+  },
+  deleteButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: '#FFEBEE',
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  deleteButtonText: {
+    color: '#C62828',
+    fontWeight: '600'
+  } // Removed trailing comma
 });
 
 export default BloodSugarScreen;

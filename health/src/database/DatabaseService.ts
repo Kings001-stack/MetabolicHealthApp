@@ -221,6 +221,99 @@ class DatabaseService {
         'DROP TABLE IF EXISTS medication_readings',
       ],
     },
+    {
+      version: 4,
+      up: [
+        // Gamification tables for Learn section
+        `CREATE TABLE IF NOT EXISTS bookmarked_topics (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id),
+          topic_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, topic_id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_bookmarked_topics_user_id ON bookmarked_topics(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_bookmarked_topics_topic_id ON bookmarked_topics(topic_id)`,
+
+        `CREATE TABLE IF NOT EXISTS topic_views (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id),
+          topic_id TEXT NOT NULL,
+          viewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_topic_views_user_id ON topic_views(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_topic_views_topic_id ON topic_views(topic_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_topic_views_viewed_at ON topic_views(viewed_at)`,
+
+        `CREATE TABLE IF NOT EXISTS learning_progress (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id),
+          total_topics_read INTEGER DEFAULT 0,
+          streak_days INTEGER DEFAULT 0,
+          last_read_date TEXT,
+          points_earned INTEGER DEFAULT 0,
+          level INTEGER DEFAULT 1,
+          weekly_goal INTEGER DEFAULT 3,
+          weekly_progress INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_learning_progress_user_id ON learning_progress(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_learning_progress_level ON learning_progress(level)`,
+
+        `CREATE TABLE IF NOT EXISTS user_achievements (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id),
+          achievement_id TEXT NOT NULL,
+          unlocked_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, achievement_id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_user_achievements_user_id ON user_achievements(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_user_achievements_achievement_id ON user_achievements(achievement_id)`,
+      ],
+      down: [
+        'DROP INDEX IF EXISTS idx_bookmarked_topics_user_id',
+        'DROP INDEX IF EXISTS idx_bookmarked_topics_topic_id',
+        'DROP INDEX IF EXISTS idx_topic_views_user_id',
+        'DROP INDEX IF EXISTS idx_topic_views_topic_id',
+        'DROP INDEX IF EXISTS idx_topic_views_viewed_at',
+        'DROP INDEX IF EXISTS idx_learning_progress_user_id',
+        'DROP INDEX IF EXISTS idx_learning_progress_level',
+        'DROP INDEX IF EXISTS idx_user_achievements_user_id',
+        'DROP INDEX IF EXISTS idx_user_achievements_achievement_id',
+        'DROP TABLE IF EXISTS user_achievements',
+        'DROP TABLE IF EXISTS learning_progress',
+        'DROP TABLE IF EXISTS topic_views',
+        'DROP TABLE IF EXISTS bookmarked_topics',
+      ],
+    },
+    {
+      version: 5,
+      up: [
+        `CREATE TABLE IF NOT EXISTS game_stats (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id),
+          level INTEGER DEFAULT 1,
+          xp INTEGER DEFAULT 0,
+          xpToNext INTEGER DEFAULT 100,
+          streak INTEGER DEFAULT 0,
+          totalPoints INTEGER DEFAULT 0,
+          badges TEXT,
+          dailyChallengeId TEXT,
+          dailyProgress INTEGER DEFAULT 0,
+          weeklyQuestId TEXT,
+          weeklyProgress INTEGER DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_game_stats_user_id ON game_stats(user_id)`
+      ],
+      down: [
+        'DROP INDEX IF EXISTS idx_game_stats_user_id',
+        'DROP TABLE IF EXISTS game_stats',
+      ],
+    },
   ];
 
   async initialize(): Promise<void> {
@@ -331,6 +424,198 @@ class DatabaseService {
       });
     } catch (error) {
       console.error('Transaction failed:', error);
+      throw error;
+    }
+  }
+
+  // Health Logger Database Methods
+  
+  // Blood Pressure Methods
+  async saveBloodPressureReading(reading: {
+    id: string;
+    systolic: number;
+    diastolic: number;
+    heart_rate?: number;
+    timestamp: string;
+    notes?: string;
+    user_id?: string;
+  }): Promise<void> {
+    await this.executeUpdate(
+      `INSERT OR REPLACE INTO blood_pressure_readings 
+       (id, systolic, diastolic, heart_rate, timestamp, notes, user_id, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [reading.id, reading.systolic, reading.diastolic, reading.heart_rate, reading.timestamp, reading.notes, reading.user_id]
+    );
+  }
+
+  async getBloodPressureReadings(user_id?: string, limit: number = 50): Promise<any[]> {
+    const query = user_id 
+      ? `SELECT * FROM blood_pressure_readings WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?`
+      : `SELECT * FROM blood_pressure_readings ORDER BY timestamp DESC LIMIT ?`;
+    const params = user_id ? [user_id, limit] : [limit];
+    return await this.executeQuery(query, params);
+  }
+
+  async deleteBloodPressureReading(id: string): Promise<void> {
+    await this.executeUpdate('DELETE FROM blood_pressure_readings WHERE id = ?', [id]);
+  }
+
+  // Weight Methods
+  async saveWeightReading(reading: {
+    id: string;
+    weight: number;
+    unit: string;
+    timestamp: string;
+    notes?: string;
+    user_id?: string;
+  }): Promise<void> {
+    await this.executeUpdate(
+      `INSERT OR REPLACE INTO weight_readings 
+       (id, weight, unit, timestamp, notes, user_id, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [reading.id, reading.weight, reading.unit, reading.timestamp, reading.notes, reading.user_id]
+    );
+  }
+
+  async getWeightReadings(user_id?: string, limit: number = 50): Promise<any[]> {
+    const query = user_id 
+      ? `SELECT * FROM weight_readings WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?`
+      : `SELECT * FROM weight_readings ORDER BY timestamp DESC LIMIT ?`;
+    const params = user_id ? [user_id, limit] : [limit];
+    return await this.executeQuery(query, params);
+  }
+
+  async deleteWeightReading(id: string): Promise<void> {
+    await this.executeUpdate('DELETE FROM weight_readings WHERE id = ?', [id]);
+  }
+
+  // Blood Sugar Methods
+  async saveBloodSugarReading(reading: {
+    id: string;
+    value: number;
+    meal_context: string;
+    timestamp: string;
+    notes?: string;
+    user_id?: string;
+  }): Promise<void> {
+    await this.executeUpdate(
+      `INSERT OR REPLACE INTO blood_sugar_readings 
+       (id, value, meal_context, timestamp, notes, user_id, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [reading.id, reading.value, reading.meal_context, reading.timestamp, reading.notes, reading.user_id]
+    );
+  }
+
+  async getBloodSugarReadings(user_id?: string, limit: number = 50): Promise<any[]> {
+    const query = user_id 
+      ? `SELECT * FROM blood_sugar_readings WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?`
+      : `SELECT * FROM blood_sugar_readings ORDER BY timestamp DESC LIMIT ?`;
+    const params = user_id ? [user_id, limit] : [limit];
+    return await this.executeQuery(query, params);
+  }
+
+  async deleteBloodSugarReading(id: string): Promise<void> {
+    await this.executeUpdate('DELETE FROM blood_sugar_readings WHERE id = ?', [id]);
+  }
+
+  // Medication Methods
+  async saveMedicationReading(reading: {
+    id: string;
+    name: string;
+    dosage: string;
+    unit: string;
+    frequency: string;
+    timeTaken: string;
+    timestamp: string;
+    notes?: string;
+    skipped?: boolean;
+    user_id?: string;
+  }): Promise<void> {
+    await this.executeUpdate(
+      `INSERT OR REPLACE INTO medication_readings 
+       (id, name, dosage, unit, frequency, timeTaken, timestamp, notes, skipped, user_id, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [reading.id, reading.name, reading.dosage, reading.unit, reading.frequency, reading.timeTaken, reading.timestamp, reading.notes, reading.skipped ? 1 : 0, reading.user_id]
+    );
+  }
+
+  async getMedicationReadings(user_id?: string, limit: number = 50): Promise<any[]> {
+    const query = user_id 
+      ? `SELECT * FROM medication_readings WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?`
+      : `SELECT * FROM medication_readings ORDER BY timestamp DESC LIMIT ?`;
+    const params = user_id ? [user_id, limit] : [limit];
+    return await this.executeQuery(query, params);
+  }
+
+  async deleteMedicationReading(id: string): Promise<void> {
+    await this.executeUpdate('DELETE FROM medication_readings WHERE id = ?', [id]);
+  }
+
+  // Database Health Check
+  async checkDatabaseHealth(): Promise<{
+    tablesExist: boolean;
+    version: number;
+    tableCount: number;
+    missingTables: string[];
+  }> {
+    try {
+      const version = await this.getCurrentVersion();
+      
+      // Check if all required tables exist
+      const requiredTables = [
+        'blood_pressure_readings',
+        'weight_readings', 
+        'blood_sugar_readings',
+        'medication_readings',
+        'users',
+        'bookmarked_topics',
+        'topic_views',
+        'learning_progress',
+        'user_achievements',
+        'game_stats'
+      ];
+      
+      const existingTables = await this.executeQuery<{name: string}>(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+      );
+      
+      const existingTableNames = existingTables.map(t => t.name);
+      const missingTables = requiredTables.filter(table => !existingTableNames.includes(table));
+      
+      return {
+        tablesExist: missingTables.length === 0,
+        version,
+        tableCount: existingTables.length,
+        missingTables
+      };
+    } catch (error) {
+      console.error('Database health check failed:', error);
+      return {
+        tablesExist: false,
+        version: 0,
+        tableCount: 0,
+        missingTables: ['all']
+      };
+    }
+  }
+
+  // Force Database Recreation (for debugging)
+  async recreateDatabase(): Promise<void> {
+    try {
+      if (this.db) {
+        await this.db.closeAsync();
+      }
+      
+      // Delete the database file and recreate
+      this.db = await SQLite.openDatabaseAsync(this.config.name);
+      
+      // Force run all migrations
+      await this.db.execAsync('DROP TABLE IF EXISTS database_version');
+      await this.runMigrations();
+      
+      console.log('Database recreated successfully');
+    } catch (error) {
+      console.error('Failed to recreate database:', error);
       throw error;
     }
   }

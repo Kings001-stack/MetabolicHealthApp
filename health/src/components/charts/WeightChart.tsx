@@ -27,13 +27,17 @@ const WeightChart: React.FC<WeightChartProps> = ({ data, period, targetWeight })
 
   const getAverageWeight = () => {
     if (data.length === 0) return 0;
-    return data.reduce((sum, reading) => sum + reading.weight, 0) / data.length;
+    const validReadings = data.filter(reading => reading.weight && !isNaN(reading.weight));
+    if (validReadings.length === 0) return 0;
+    return validReadings.reduce((sum, reading) => sum + reading.weight, 0) / validReadings.length;
   };
 
   const getWeightChange = () => {
     if (data.length < 2) return 0;
-    const firstWeight = data[0].weight;
-    const lastWeight = data[data.length - 1].weight;
+    const validData = data.filter(reading => reading.weight && !isNaN(reading.weight));
+    if (validData.length < 2) return 0;
+    const firstWeight = validData[0].weight;
+    const lastWeight = validData[validData.length - 1].weight;
     return lastWeight - firstWeight;
   };
 
@@ -57,13 +61,24 @@ const WeightChart: React.FC<WeightChartProps> = ({ data, period, targetWeight })
       );
     }
 
-    const maxWeight = Math.max(...data.map(r => r.weight));
-    const minWeight = Math.min(...data.map(r => r.weight));
+    const validData = data.filter(reading => reading.weight && !isNaN(reading.weight));
+    if (validData.length === 0) {
+      return (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>No valid weight data</Text>
+          <Text style={styles.emptySubtext}>Weight values are missing or invalid</Text>
+        </View>
+      );
+    }
+
+    const weights = validData.map(r => r.weight);
+    const maxWeight = Math.max(...weights);
+    const minWeight = Math.min(...weights);
     const range = maxWeight - minWeight || 1;
 
-    return data.slice(-10).map((reading, index) => {
+    return validData.slice(-10).map((reading, index) => {
       const heightPercentage = ((reading.weight - minWeight) / range) * 60 + 20;
-      const unit = reading.unit;
+      const unit = reading.unit || 'kg';
       
       return (
         <View key={reading.id} style={styles.dataPoint}>

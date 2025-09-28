@@ -26,6 +26,8 @@ export interface BloodSugarReading {
     BloodPressure: undefined;
     Weight: undefined;
     EducationTopic: { topic: any };
+    GameScreen: undefined;
+    HealthQuizGame: undefined;
   };
   
   export type MainTabParamList = {

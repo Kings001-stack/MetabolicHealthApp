@@ -9,8 +9,18 @@ import {
   TextInput,
   ScrollView,
   FlatList,
+  Dimensions,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { LineChart } from 'react-native-chart-kit';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Card from '@/components/common/Card';
+// Placeholder for AdMob (replace with actual SDK in production)
+const AdMobInterstitial = {
+  setAdUnitID: async (id: string) => {},
+  requestAd: async () => {},
+  showAd: async () => console.log('Simulated AdMob interstitial shown'),
+};
 
 interface BloodSugarReading {
   id: string;
@@ -24,24 +34,48 @@ interface BloodSugarLoggerProps {
   onLog: (reading: BloodSugarReading) => void;
   onEdit?: (reading: BloodSugarReading) => void;
   onDelete?: (id: string) => void;
+  showHistory?: boolean; // when false, do not render internal FlatList to avoid nested VirtualizedLists
 }
 
-const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDelete }) => {
+const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDelete, showHistory = true }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingReading, setEditingReading] = useState<BloodSugarReading | null>(null);
   const [value, setValue] = useState('');
   const [selectedType, setSelectedType] = useState('fasting');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [notes, setNotes] = useState('');
   const [readings, setReadings] = useState<BloodSugarReading[]>([]);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [logStreak, setLogStreak] = useState(0);
 
   const readingTypes = [
     { key: 'fasting', label: 'Fasting', description: 'Before eating (8+ hours)' },
-    { key: 'pre-meal', label: 'Pre-meal', description: 'Before eating' },
-    { key: 'post-meal', label: 'Post-meal', description: '2 hours after eating' },
+    { key: 'before-meal', label: 'Pre-meal', description: 'Before eating' },
+    { key: 'after-meal', label: 'Post-meal', description: '2 hours after eating' },
     { key: 'bedtime', label: 'Bedtime', description: 'Before sleep' },
   ];
+
+  // Load data from AsyncStorage
+  useEffect(() => {
+    const loadData = async () => {
+      const savedReadings = await AsyncStorage.getItem('bloodSugarReadings');
+      if (savedReadings) setReadings(JSON.parse(savedReadings));
+      const savedStreak = await AsyncStorage.getItem('bloodSugarLogStreak');
+      if (savedStreak) setLogStreak(parseInt(savedStreak, 10));
+    };
+    loadData();
+  }, []);
+
+  // Save data to AsyncStorage
+  useEffect(() => {
+    const saveData = async () => {
+      await AsyncStorage.setItem('bloodSugarReadings', JSON.stringify(readings));
+      await AsyncStorage.setItem('bloodSugarLogStreak', logStreak.toString());
+    };
+    saveData();
+  }, [readings, logStreak]);
 
   const validateInput = (): boolean => {
     const newErrors: { [key: string]: string } = {};
@@ -56,10 +90,15 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
         newErrors.value = 'Blood sugar cannot be below 20 mg/dL (this is dangerously low)';
       } else if (numValue > 600) {
         newErrors.value = 'Blood sugar cannot exceed 600 mg/dL (this is dangerously high)';
-      } else if (numValue > 400) {
-        newErrors.value = 'Warning: Blood sugar above 400 mg/dL is critically high. Please seek medical attention.';
-      } else if (numValue < 40) {
-        newErrors.value = 'Critical: Blood sugar below 40 mg/dL requires immediate medical attention.';
+      }
+    }
+
+    if (!date.trim()) {
+      newErrors.date = 'Date is required';
+    } else {
+      const parsedDate = new Date(date);
+      if (isNaN(parsedDate.getTime())) {
+        newErrors.date = 'Please enter a valid date (YYYY-MM-DD)';
       }
     }
 
@@ -67,39 +106,85 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
     return Object.keys(newErrors).length === 0;
   };
 
+  const showRedFlagAlert = (value: number) => {
+    if (value < 40) {
+      Alert.alert(
+        '🚨 Hypoglycemia Alert',
+        'Your blood sugar is critically low (<40 mg/dL). Seek immediate medical attention.',
+        [{ text: 'Call a Doctor', onPress: () => console.log('Call doctor') }],
+      );
+    } else if (value > 400) {
+      Alert.alert(
+        '🚨 Hyperglycemia Alert',
+        'Your blood sugar is critically high (>400 mg/dL). Seek immediate medical attention.',
+        [{ text: 'Call a Doctor', onPress: () => console.log('Call doctor') }],
+      );
+    }
+  };
+
+  const updateStreak = (newReadingDate: string) => {
+    const today = new Date().toISOString().split('T')[0];
+    const lastReadingDate = readings[0]?.timestamp.split('T')[0];
+    if (lastReadingDate) {
+      const lastDate = new Date(lastReadingDate);
+      const newDate = new Date(newReadingDate);
+      const diffDays = (newDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24);
+      if (diffDays === 1 || (diffDays === 0 && newReadingDate === today)) {
+        setLogStreak(logStreak + 1);
+        if (logStreak + 1 === 7) {
+          Alert.alert('🎉 Achievement Unlocked', '7-day blood sugar log streak!');
+        }
+      } else if (diffDays > 1) {
+        setLogStreak(1);
+      }
+    } else {
+      setLogStreak(1);
+    }
+  };
+
+  const showInterstitialAd = async () => {
+    try {
+      await AdMobInterstitial.setAdUnitID('ca-app-pub-test-id');
+      await AdMobInterstitial.requestAd();
+      await AdMobInterstitial.showAd();
+    } catch (error) {
+      console.log('Ad failed to load:', error);
+    }
+  };
+
   const handleSave = () => {
     if (!validateInput()) return;
 
+    const numValue = parseFloat(value);
+    showRedFlagAlert(numValue);
+
     if (isEditMode && editingReading) {
-      // Update existing reading
       const updatedReading: BloodSugarReading = {
         ...editingReading,
-        value: parseFloat(value),
+        value: numValue,
         type: selectedType,
+        timestamp: date,
         notes: notes.trim() || undefined,
       };
-
-      setReadings(readings.map(r => r.id === editingReading.id ? updatedReading : r));
+      setReadings(readings.map((r) => (r.id === editingReading.id ? updatedReading : r)));
       onEdit?.(updatedReading);
-      Alert.alert('Success', `Blood sugar updated: ${value} mg/dL`);
     } else {
-      // Create new reading
       const reading: BloodSugarReading = {
         id: Date.now().toString(),
-        value: parseFloat(value),
+        value: numValue,
         type: selectedType,
-        timestamp: new Date().toISOString(),
+        timestamp: date,
         notes: notes.trim() || undefined,
       };
-
-      setReadings([reading, ...readings]); // Add to beginning for newest first
+      setReadings([reading, ...readings]);
+      updateStreak(date);
+      showInterstitialAd();
       onLog(reading);
-      Alert.alert('Success', `Blood sugar logged: ${value} mg/dL`);
     }
 
-    // Reset form
     setValue('');
     setSelectedType('fasting');
+    setDate(new Date().toISOString().split('T')[0]);
     setNotes('');
     setErrors({});
     setIsVisible(false);
@@ -108,7 +193,6 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
   };
 
   const getBloodSugarStatus = (value: number, type: string) => {
-    // Blood sugar ranges in mg/dL
     if (type === 'fasting') {
       if (value < 70) return { status: 'Low', color: '#FF5252', urgent: true };
       if (value <= 99) return { status: 'Normal', color: '#4CAF50', urgent: false };
@@ -120,7 +204,6 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
       if (value <= 199) return { status: 'Prediabetes', color: '#FF9800', urgent: false };
       return { status: 'Diabetes', color: '#FF5252', urgent: true };
     } else {
-      // General ranges for other types
       if (value < 70) return { status: 'Low', color: '#FF5252', urgent: true };
       if (value <= 140) return { status: 'Normal', color: '#4CAF50', urgent: false };
       if (value <= 180) return { status: 'Elevated', color: '#FF9800', urgent: false };
@@ -130,12 +213,10 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
 
   const getBloodSugarTrend = () => {
     if (readings.length < 2) return null;
-    
     const recent = readings.slice(0, 2);
     const current = recent[0].value;
     const previous = recent[1].value;
     const diff = current - previous;
-    
     if (Math.abs(diff) < 10) return { trend: 'stable', icon: '➡️', color: '#666666' };
     if (diff > 0) return { trend: 'increasing', icon: '📈', color: '#FF5252' };
     return { trend: 'decreasing', icon: '📉', color: '#4CAF50' };
@@ -143,39 +224,29 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
 
   const getAverageReading = () => {
     if (readings.length === 0) return null;
-    
     const sum = readings.reduce((acc, reading) => acc + reading.value, 0);
     const average = sum / readings.length;
-    
     return {
       value: Math.round(average),
-      status: getBloodSugarStatus(average, 'fasting') // Use fasting as general reference
+      status: getBloodSugarStatus(average, 'fasting'),
     };
   };
 
-  const getReadingStatus = (value: number, type: string) => {
-    let normal: [number, number];
-    
-    switch (type) {
-      case 'fasting':
-        normal = [70, 100];
-        break;
-      case 'pre-meal':
-        normal = [70, 130];
-        break;
-      case 'post-meal':
-        normal = [70, 180];
-        break;
-      case 'bedtime':
-        normal = [100, 140];
-        break;
-      default:
-        normal = [70, 140];
-    }
+  const getChartData = () => {
+    const last7Days = readings
+      .filter((r) => {
+        const readingDate = new Date(r.timestamp);
+        const now = new Date();
+        const diffDays = (now.getTime() - readingDate.getTime()) / (1000 * 3600 * 24);
+        return diffDays <= 7;
+      })
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .slice(-7);
 
-    if (value < normal[0]) return { status: 'Low', color: '#2196F3' };
-    if (value > normal[1]) return { status: 'High', color: '#F44336' };
-    return { status: 'Normal', color: '#4CAF50' };
+    return {
+      labels: last7Days.map((r) => new Date(r.timestamp).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })),
+      datasets: [{ data: last7Days.map((r) => r.value) }],
+    };
   };
 
   return (
@@ -183,13 +254,10 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
       <Card style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.title}>🩸 Blood Sugar</Text>
-          <Text style={styles.subtitle}>Log your glucose readings</Text>
+          <Text style={styles.subtitle}>Log your glucose readings {logStreak > 0 ? `(Streak: ${logStreak} days)` : ''}</Text>
         </View>
 
-        <TouchableOpacity
-          style={styles.logButton}
-          onPress={() => setIsVisible(true)}
-        >
+        <TouchableOpacity style={styles.logButton} onPress={() => setIsVisible(true)}>
           <Text style={styles.logButtonText}>+ Log Reading</Text>
         </TouchableOpacity>
 
@@ -201,11 +269,10 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
         </View>
       </Card>
 
-      {/* History Section */}
-      <Card style={[styles.container, { marginTop: 16 }]}>
+      <Card style={styles.historyContainer}>
         <View style={styles.header}>
           <Text style={styles.title}>📊 Blood Sugar History</Text>
-          <Text style={styles.subtitle}>Your glucose tracking progress</Text>
+          <Text style={styles.subtitle}>Your glucose tracking progress {logStreak > 0 ? `(Streak: ${logStreak} days)` : ''}</Text>
         </View>
 
         {readings.length === 0 ? (
@@ -218,28 +285,44 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
           </View>
         ) : (
           <>
-            {/* Blood Sugar Analytics */}
+            {readings.length >= 1 && (
+              <View style={styles.chartContainer}>
+                <Text style={styles.analyticsLabel}>7-Day Trend</Text>
+                <LineChart
+                  data={getChartData()}
+                  width={Dimensions.get('window').width - 48}
+                  height={200}
+                  yAxisLabel=""
+                  yAxisSuffix=" mg/dL"
+                  chartConfig={{
+                    backgroundColor: '#FFFFFF',
+                    backgroundGradientFrom: '#FFFFFF',
+                    backgroundGradientTo: '#FFFFFF',
+                    decimalPlaces: 0,
+                    color: () => '#4CAF50',
+                    labelColor: () => '#333333',
+                    propsForDots: { r: '6', strokeWidth: '2', stroke: '#4CAF50' },
+                  }}
+                  bezier
+                  style={styles.chart}
+                />
+              </View>
+            )}
+
             <View style={styles.analyticsContainer}>
-              {/* Average Reading */}
               {(() => {
                 const average = getAverageReading();
                 return average ? (
                   <View style={styles.analyticsCard}>
                     <Text style={styles.analyticsLabel}>Average</Text>
                     <Text style={styles.analyticsValue}>{average.value} mg/dL</Text>
-                    <View style={[
-                      styles.analyticsStatus,
-                      { backgroundColor: average.status.color }
-                    ]}>
-                      <Text style={styles.analyticsStatusText}>
-                        {average.status.status}
-                      </Text>
+                    <View style={[styles.analyticsStatus, { backgroundColor: average.status.color }]}>
+                      <Text style={styles.analyticsStatusText}>{average.status.status}</Text>
                     </View>
                   </View>
                 ) : null;
               })()}
 
-              {/* Recent Trend */}
               {readings.length >= 2 && (
                 <View style={styles.analyticsCard}>
                   <Text style={styles.analyticsLabel}>Trend</Text>
@@ -247,19 +330,14 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
                     const trend = getBloodSugarTrend();
                     return trend ? (
                       <View style={styles.trendInfo}>
-                        <Text style={[styles.trendIcon, { color: trend.color }]}>
-                          {trend.icon}
-                        </Text>
-                        <Text style={[styles.trendText, { color: trend.color }]}>
-                          {trend.trend}
-                        </Text>
+                        <Text style={[styles.trendIcon, { color: trend.color }]}>{trend.icon}</Text>
+                        <Text style={[styles.trendText, { color: trend.color }]}>{trend.trend}</Text>
                       </View>
                     ) : null;
                   })()}
                 </View>
               )}
 
-              {/* Total Readings */}
               <View style={styles.analyticsCard}>
                 <Text style={styles.analyticsLabel}>Readings</Text>
                 <Text style={styles.analyticsValue}>{readings.length}</Text>
@@ -267,37 +345,25 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
               </View>
             </View>
 
-            <FlatList
-              data={readings.slice(0, 10)} // Show last 10 readings
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <View style={styles.historyItem}>
+            {showHistory !== false && (
+              <FlatList
+                data={readings.slice(0, 10)}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                  <View style={styles.historyItem}>
                   <View style={styles.historyContent}>
                     <View style={styles.historyHeader}>
                       <Text style={styles.historyValue}>{item.value} mg/dL</Text>
-                      <View style={[
-                        styles.historyStatus,
-                        { backgroundColor: getBloodSugarStatus(item.value, item.type).color }
-                      ]}>
-                        <Text style={styles.historyStatusText}>
-                          {getBloodSugarStatus(item.value, item.type).status}
-                        </Text>
+                      <View style={[styles.historyStatus, { backgroundColor: getBloodSugarStatus(item.value, item.type).color }]}>
+                        <Text style={styles.historyStatusText}>{getBloodSugarStatus(item.value, item.type).status}</Text>
                       </View>
                     </View>
-                    
                     <View style={styles.historyDetails}>
-                      <Text style={styles.historyType}>
-                        {readingTypes.find(t => t.key === item.type)?.label || item.type}
-                      </Text>
-                      <Text style={styles.historyDetail}>
-                        {new Date(item.timestamp).toLocaleString()}
-                      </Text>
-                      {item.notes && (
-                        <Text style={styles.historyNotes}>{item.notes}</Text>
-                      )}
+                      <Text style={styles.historyType}>{readingTypes.find((t) => t.key === item.type)?.label || item.type}</Text>
+                      <Text style={styles.historyDetail}>{new Date(item.timestamp).toLocaleString()}</Text>
+                      {item.notes && <Text style={styles.historyNotes}>{item.notes}</Text>}
                     </View>
                   </View>
-
                   <View style={styles.historyActions}>
                     <TouchableOpacity
                       style={[styles.actionButton, styles.editButton]}
@@ -305,6 +371,7 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
                         setEditingReading(item);
                         setValue(item.value.toString());
                         setSelectedType(item.type);
+                        setDate(item.timestamp.split('T')[0]);
                         setNotes(item.notes || '');
                         setIsEditMode(true);
                         setIsVisible(true);
@@ -312,7 +379,6 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
                     >
                       <Text style={styles.actionButtonText}>✏️ Edit</Text>
                     </TouchableOpacity>
-                    
                     <TouchableOpacity
                       style={[styles.actionButton, styles.deleteButton]}
                       onPress={() => {
@@ -325,12 +391,12 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
                               text: 'Delete',
                               style: 'destructive',
                               onPress: () => {
-                                setReadings(readings.filter(r => r.id !== item.id));
+                                setReadings(readings.filter((r) => r.id !== item.id));
                                 onDelete?.(item.id);
                                 Alert.alert('Success', 'Reading deleted successfully');
-                              }
-                            }
-                          ]
+                              },
+                            },
+                          ],
                         );
                       }}
                     >
@@ -338,9 +404,10 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
                     </TouchableOpacity>
                   </View>
                 </View>
-              )}
-              showsVerticalScrollIndicator={false}
-            />
+                )}
+                showsVerticalScrollIndicator={false}
+              />
+            )}
           </>
         )}
       </Card>
@@ -354,16 +421,13 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {isEditMode ? 'Edit Blood Sugar' : 'Log Blood Sugar'}
-              </Text>
+              <Text style={styles.modalTitle}>{isEditMode ? 'Edit Blood Sugar' : 'Log Blood Sugar'}</Text>
               <TouchableOpacity onPress={() => setIsVisible(false)}>
                 <Text style={styles.closeButton}>✕</Text>
               </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-              {/* Blood Sugar Value Input */}
               <View style={styles.inputSection}>
                 <Text style={styles.inputLabel}>Blood Sugar (mg/dL)</Text>
                 <TextInput
@@ -377,32 +441,22 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
                 {errors.value && <Text style={styles.errorText}>{errors.value}</Text>}
               </View>
 
-              {/* Reading Type Selection */}
               <View style={styles.inputSection}>
                 <Text style={styles.inputLabel}>Reading Type</Text>
                 <View style={styles.typeGrid}>
                   {readingTypes.map((type) => (
                     <TouchableOpacity
                       key={type.key}
-                      style={[
-                        styles.typeButton,
-                        selectedType === type.key && styles.typeButtonSelected,
-                      ]}
+                      style={[styles.typeButton, selectedType === type.key && styles.typeButtonSelected]}
                       onPress={() => setSelectedType(type.key)}
                     >
                       <Text
-                        style={[
-                          styles.typeButtonText,
-                          selectedType === type.key && styles.typeButtonTextSelected,
-                        ]}
+                        style={[styles.typeButtonText, selectedType === type.key && styles.typeButtonTextSelected]}
                       >
                         {type.label}
                       </Text>
                       <Text
-                        style={[
-                          styles.typeDescription,
-                          selectedType === type.key && styles.typeDescriptionSelected,
-                        ]}
+                        style={[styles.typeDescription, selectedType === type.key && styles.typeDescriptionSelected]}
                       >
                         {type.description}
                       </Text>
@@ -411,28 +465,44 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
                 </View>
               </View>
 
-              {/* Reading Preview */}
+              <View style={styles.inputSection}>
+                <Text style={styles.inputLabel}>Date</Text>
+                <TouchableOpacity
+                  style={[styles.input, errors.date && styles.inputError]}
+                  onPress={() => setShowDatePicker(true)}
+                >
+                  <Text style={styles.inputText}>{date || 'Select date'}</Text>
+                </TouchableOpacity>
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={date ? new Date(date) : new Date()}
+                    mode="date"
+                    display="default"
+                    onChange={(event, selectedDate) => {
+                      setShowDatePicker(false);
+                      if (selectedDate) {
+                        setDate(selectedDate.toISOString().split('T')[0]);
+                      }
+                    }}
+                  />
+                )}
+                {errors.date && <Text style={styles.errorText}>{errors.date}</Text>}
+              </View>
+
               {value && !errors.value && (
                 <View style={styles.previewCard}>
                   <Text style={styles.previewLabel}>📊 Reading Preview</Text>
                   <View style={styles.previewContent}>
                     <Text style={styles.previewValue}>{value} mg/dL</Text>
-                    <View
-                      style={[
-                        styles.previewStatus,
-                        { backgroundColor: getReadingStatus(parseFloat(value), selectedType).color },
-                      ]}
-                    >
-                      <Text style={styles.previewStatusText}>
-                        {getReadingStatus(parseFloat(value), selectedType).status.toUpperCase()}
-                      </Text>
+                    <View style={[styles.previewStatus, { backgroundColor: getBloodSugarStatus(parseFloat(value), selectedType).color }]}>
+                      <Text style={styles.previewStatusText}>{getBloodSugarStatus(parseFloat(value), selectedType).status.toUpperCase()}</Text>
                     </View>
                   </View>
-                  <Text style={styles.previewType}>Type: {readingTypes.find(t => t.key === selectedType)?.label}</Text>
+                  <Text style={styles.previewType}>Type: {readingTypes.find((t) => t.key === selectedType)?.label}</Text>
+                  <Text style={styles.previewType}>Date: {date}</Text>
                 </View>
               )}
 
-              {/* Notes Input */}
               <View style={styles.inputSection}>
                 <Text style={styles.inputLabel}>Notes (Optional)</Text>
                 <TextInput
@@ -447,19 +517,12 @@ const BloodSugarLogger: React.FC<BloodSugarLoggerProps> = ({ onLog, onEdit, onDe
                 />
               </View>
 
-              {/* Action Buttons */}
               <View style={styles.buttonContainer}>
-                <TouchableOpacity
-                  style={[styles.button, styles.cancelButton]}
-                  onPress={() => setIsVisible(false)}
-                >
+                <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => setIsVisible(false)}>
                   <Text style={styles.cancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.button, styles.saveButton]}
-                  onPress={handleSave}
-                >
-                  <Text style={styles.saveButtonText}>Save Reading</Text>
+                <TouchableOpacity style={[styles.button, styles.saveButton]} onPress={handleSave}>
+                  <Text style={styles.saveButtonText}>{isEditMode ? 'Update Reading' : 'Save Reading'}</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -474,6 +537,10 @@ const styles = StyleSheet.create({
   container: {
     margin: 16,
   },
+  historyContainer: {
+    margin: 16,
+    marginTop: 16,
+  },
   header: {
     marginBottom: 16,
   },
@@ -482,10 +549,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333333',
     marginBottom: 4,
+    fontFamily: 'Inter-Bold',
   },
   subtitle: {
     fontSize: 14,
     color: '#666666',
+    fontFamily: 'Inter-Regular',
   },
   logButton: {
     backgroundColor: '#4CAF50',
@@ -499,6 +568,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
   quickInfo: {
     backgroundColor: '#F8F9FA',
@@ -510,14 +580,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
     marginBottom: 8,
+    fontFamily: 'Inter-Bold',
   },
   quickInfoItem: {
     fontSize: 13,
     color: '#666666',
     marginBottom: 2,
+    fontFamily: 'Inter-Regular',
   },
-  
-  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -548,6 +618,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#333333',
+    fontFamily: 'Inter-Bold',
   },
   closeButton: {
     fontSize: 24,
@@ -559,8 +630,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
   },
-  
-  // Input Styles
   inputSection: {
     marginBottom: 20,
   },
@@ -569,6 +638,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
     marginBottom: 8,
+    fontFamily: 'Inter-Bold',
   },
   input: {
     borderWidth: 1,
@@ -579,6 +649,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#FAFAFA',
     color: '#333333',
+    fontFamily: 'Inter-Regular',
+  },
+  inputText: {
+    fontSize: 16,
+    color: '#333333',
+    fontFamily: 'Inter-Regular',
   },
   inputError: {
     borderColor: '#FF5252',
@@ -589,16 +665,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 6,
     marginLeft: 4,
+    fontFamily: 'Inter-Regular',
   },
   notesInput: {
     height: 80,
     textAlignVertical: 'top',
   },
-  formContainer: {
-    flex: 1,
-  },
-  
-  // Type Selection Styles
   typeGrid: {
     gap: 12,
   },
@@ -619,6 +691,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
     marginBottom: 4,
+    fontFamily: 'Inter-Bold',
   },
   typeButtonTextSelected: {
     color: '#2E7D32',
@@ -627,12 +700,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666666',
     lineHeight: 18,
+    fontFamily: 'Inter-Regular',
   },
   typeDescriptionSelected: {
     color: '#4CAF50',
   },
-  
-  // Preview Styles
   previewCard: {
     backgroundColor: '#F0F8F0',
     borderRadius: 12,
@@ -646,6 +718,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2E7D32',
     marginBottom: 12,
+    fontFamily: 'Inter-Bold',
   },
   previewContent: {
     flexDirection: 'row',
@@ -657,6 +730,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#2E7D32',
+    fontFamily: 'Inter-Bold',
   },
   previewStatus: {
     paddingHorizontal: 12,
@@ -668,14 +742,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#FFFFFF',
     letterSpacing: 0.5,
+    fontFamily: 'Inter-Bold',
   },
   previewType: {
     fontSize: 14,
     color: '#2E7D32',
     fontWeight: '500',
+    fontFamily: 'Inter-Regular',
   },
-  
-  // Button Styles
   buttonContainer: {
     flexDirection: 'row',
     gap: 12,
@@ -701,14 +775,14 @@ const styles = StyleSheet.create({
     color: '#666666',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
   saveButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
-  
-  // History Section Styles
   noHistoryContainer: {
     alignItems: 'center',
     paddingVertical: 40,
@@ -724,15 +798,22 @@ const styles = StyleSheet.create({
     color: '#333333',
     marginBottom: 8,
     textAlign: 'center',
+    fontFamily: 'Inter-Bold',
   },
   noHistoryText: {
     fontSize: 14,
     color: '#666666',
     textAlign: 'center',
     lineHeight: 20,
+    fontFamily: 'Inter-Regular',
   },
-  
-  // Analytics Styles
+  chartContainer: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  chart: {
+    borderRadius: 12,
+  },
   analyticsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -753,16 +834,19 @@ const styles = StyleSheet.create({
     color: '#666666',
     marginBottom: 4,
     textAlign: 'center',
+    fontFamily: 'Inter-Regular',
   },
   analyticsValue: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#333333',
     marginBottom: 4,
+    fontFamily: 'Inter-Bold',
   },
   analyticsSubtext: {
     fontSize: 11,
     color: '#666666',
+    fontFamily: 'Inter-Regular',
   },
   analyticsStatus: {
     paddingHorizontal: 6,
@@ -773,6 +857,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
     color: '#FFFFFF',
+    fontFamily: 'Inter-Bold',
   },
   trendInfo: {
     flexDirection: 'row',
@@ -785,9 +870,8 @@ const styles = StyleSheet.create({
   trendText: {
     fontSize: 12,
     fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
-  
-  // History Item Styles
   historyItem: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
@@ -815,6 +899,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#333333',
+    fontFamily: 'Inter-Bold',
   },
   historyStatus: {
     paddingHorizontal: 8,
@@ -825,6 +910,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     color: '#FFFFFF',
+    fontFamily: 'Inter-Bold',
   },
   historyDetails: {
     marginTop: 4,
@@ -834,11 +920,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2196F3',
     marginBottom: 2,
+    fontFamily: 'Inter-Bold',
   },
   historyDetail: {
     fontSize: 13,
     color: '#666666',
     marginBottom: 2,
+    fontFamily: 'Inter-Regular',
   },
   historyNotes: {
     fontSize: 13,
@@ -848,17 +936,29 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#F0F0F0',
+    fontFamily: 'Inter-Regular',
   },
   historyActions: {
     flexDirection: 'row',
     gap: 8,
+  },
+  actionButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
   },
   editButton: {
     backgroundColor: '#2196F3',
   },
   deleteButton: {
     backgroundColor: '#FF5252',
-    paddingHorizontal: 12,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   },
 });
 

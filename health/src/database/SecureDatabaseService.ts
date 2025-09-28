@@ -3,7 +3,137 @@ import EncryptionService from '../utils/security/EncryptionService';
 import AuthService from '../utils/security/AuthService';
 import HealthDataValidator from '../utils/validation/DataValidator';
 
+// Define interface for SQLite query results
+interface IntegrityCheckResult {
+  integrity_check: string;
+}
+
 export class SecureDatabaseService {
+  // Initialize database with all required tables
+  static async initDatabase(): Promise<void> {
+    try {
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL,
+          email TEXT UNIQUE NOT NULL,
+          created_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS weight_readings (
+          id TEXT PRIMARY KEY,
+          weight REAL NOT NULL,
+          unit TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS blood_sugar_readings (
+          id TEXT PRIMARY KEY,
+          level INTEGER NOT NULL,
+          unit TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS blood_pressure_readings (
+          id TEXT PRIMARY KEY,
+          systolic INTEGER NOT NULL,
+          diastolic INTEGER NOT NULL,
+          heart_rate INTEGER,
+          timestamp TEXT NOT NULL,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS activity_sessions (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          duration INTEGER NOT NULL,
+          timestamp TEXT NOT NULL,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS user_profile (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          height_cm REAL,
+          conditions TEXT, // JSON string of conditions (e.g., ["Obesity"])
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS app_settings (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          preferences TEXT, // JSON string
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS medication_readings (
+          id TEXT PRIMARY KEY,
+          medication_name TEXT NOT NULL,
+          dose REAL NOT NULL,
+          unit TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS bookmarked_topics (
+          id TEXT PRIMARY KEY,
+          topic_name TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS learning_progress (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL,
+          progress REAL NOT NULL, // e.g., 0.75 for 75% complete
+          last_updated TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      await DatabaseService.executeUpdate(
+        `CREATE TABLE IF NOT EXISTS user_achievements (
+          id TEXT PRIMARY KEY,
+          achievement_name TEXT NOT NULL,
+          description TEXT,
+          achieved_on TEXT NOT NULL,
+          badge_icon TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`
+      );
+      console.log('Database initialized successfully');
+    } catch (error: unknown) {
+      const err = error as Error;
+      console.error('Database initialization failed:', err.message);
+      throw new Error(`Database initialization failed: ${err.message}`);
+    }
+  }
+
   // Secure data insertion with validation and encryption
   static async secureInsert(
     table: string,
@@ -48,12 +178,13 @@ export class SecureDatabaseService {
       });
 
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = error as Error;
       await AuthService.logSecurityEvent('data_insert_failed', {
         table,
-        error: error.message,
+        error: err.message || 'Unknown error',
       });
-      throw error;
+      throw err;
     }
   }
 
@@ -85,8 +216,8 @@ export class SecureDatabaseService {
                 const encryptedData = JSON.parse(decryptedRow[field]);
                 const decrypted = await EncryptionService.decryptHealthData(encryptedData);
                 decryptedRow[field] = JSON.parse(decrypted);
-              } catch (error) {
-                console.warn(`Failed to decrypt field ${field}:`, error);
+              } catch (error: unknown) {
+                console.warn(`Failed to decrypt field ${field}:`, (error as Error).message);
               }
             }
           }
@@ -102,12 +233,13 @@ export class SecureDatabaseService {
       });
 
       return decryptedResults;
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = error as Error;
       await AuthService.logSecurityEvent('data_select_failed', {
         table,
-        error: error.message,
+        error: err.message || 'Unknown error',
       });
-      throw error;
+      throw err;
     }
   }
 
@@ -153,12 +285,13 @@ export class SecureDatabaseService {
       });
 
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = error as Error;
       await AuthService.logSecurityEvent('data_update_failed', {
         table,
-        error: error.message,
+        error: err.message || 'Unknown error',
       });
-      throw error;
+      throw err;
     }
   }
 
@@ -182,12 +315,13 @@ export class SecureDatabaseService {
       });
 
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = error as Error;
       await AuthService.logSecurityEvent('data_delete_failed', {
         table,
-        error: error.message,
+        error: err.message || 'Unknown error',
       });
-      throw error;
+      throw err;
     }
   }
 
@@ -221,12 +355,22 @@ export class SecureDatabaseService {
     const values: any[] = [];
 
     if (Object.keys(conditions).length > 0) {
-      const whereClause = Object.keys(conditions)
-        .map(key => `${key} = ?`)
-        .join(' AND ');
-      
-      query += ` WHERE ${whereClause}`;
-      values.push(...Object.values(conditions));
+      const whereParts: string[] = [];
+      for (const [key, value] of Object.entries(conditions)) {
+        if (key.endsWith('_gte')) {
+          whereParts.push(`${key.replace('_gte', '')} >= ?`);
+          values.push(value);
+        } else if (key.endsWith('_lte')) {
+          whereParts.push(`${key.replace('_lte', '')} <= ?`);
+          values.push(value);
+        } else {
+          whereParts.push(`${key} = ?`);
+          values.push(value);
+        }
+      }
+      if (whereParts.length > 0) {
+        query += ` WHERE ${whereParts.join(' AND ')}`;
+      }
     }
 
     return { query, values };
@@ -241,23 +385,47 @@ export class SecureDatabaseService {
       .map(key => `${key} = ?`)
       .join(', ');
     
-    const whereClause = Object.keys(conditions)
-      .map(key => `${key} = ?`)
-      .join(' AND ');
+    const whereParts: string[] = [];
+    const whereValues: any[] = [];
+    for (const [key, value] of Object.entries(conditions)) {
+      if (key.endsWith('_gte')) {
+        whereParts.push(`${key.replace('_gte', '')} >= ?`);
+        whereValues.push(value);
+      } else if (key.endsWith('_lte')) {
+        whereParts.push(`${key.replace('_lte', '')} <= ?`);
+        whereValues.push(value);
+      } else {
+        whereParts.push(`${key} = ?`);
+        whereValues.push(value);
+      }
+    }
 
+    const whereClause = whereParts.join(' AND ');
     const query = `UPDATE ${this.sanitizeTableName(table)} SET ${setClause} WHERE ${whereClause}`;
-    const values = [...Object.values(data), ...Object.values(conditions)];
+    const values = [...Object.values(data), ...whereValues];
 
     return { query, values };
   }
 
   private static buildDeleteQuery(table: string, conditions: any): { query: string; values: any[] } {
-    const whereClause = Object.keys(conditions)
-      .map(key => `${key} = ?`)
-      .join(' AND ');
+    const whereParts: string[] = [];
+    const whereValues: any[] = [];
+    for (const [key, value] of Object.entries(conditions)) {
+      if (key.endsWith('_gte')) {
+        whereParts.push(`${key.replace('_gte', '')} >= ?`);
+        whereValues.push(value);
+      } else if (key.endsWith('_lte')) {
+        whereParts.push(`${key.replace('_lte', '')} <= ?`);
+        whereValues.push(value);
+      } else {
+        whereParts.push(`${key} = ?`);
+        whereValues.push(value);
+      }
+    }
 
+    const whereClause = whereParts.join(' AND ');
     const query = `DELETE FROM ${this.sanitizeTableName(table)} WHERE ${whereClause}`;
-    const values = Object.values(conditions);
+    const values = whereValues;
 
     return { query, values };
   }
@@ -276,6 +444,10 @@ export class SecureDatabaseService {
       'activity_sessions',
       'user_profile',
       'app_settings',
+      'medication_readings',
+      'bookmarked_topics',
+      'learning_progress',
+      'user_achievements',
     ];
 
     if (!allowedTables.includes(sanitized)) {
@@ -288,10 +460,11 @@ export class SecureDatabaseService {
   // Database integrity check
   static async performIntegrityCheck(): Promise<boolean> {
     try {
-      const result = await DatabaseService.executeQuery('PRAGMA integrity_check');
-      return result.length === 1 && result[0].integrity_check === 'ok';
-    } catch (error) {
-      console.error('Database integrity check failed:', error);
+      const result = await DatabaseService.executeQuery<IntegrityCheckResult>('PRAGMA integrity_check');
+      return result.length === 1 && (result as any)[0].integrity_check === 'ok';
+    } catch (error: unknown) {
+      const err = error as Error;
+      console.error('Database integrity check failed:', err.message || 'Unknown error');
       return false;
     }
   }
@@ -300,7 +473,14 @@ export class SecureDatabaseService {
   static async createSecureBackup(): Promise<string> {
     try {
       // Get all data from critical tables
-      const tables = ['weight_readings', 'blood_sugar_readings', 'blood_pressure_readings'];
+      const tables = [
+        'weight_readings',
+        'blood_sugar_readings',
+        'blood_pressure_readings',
+        'bookmarked_topics',
+        'learning_progress',
+        'user_achievements',
+      ];
       const backup: any = {};
 
       for (const table of tables) {
@@ -317,11 +497,12 @@ export class SecureDatabaseService {
       });
 
       return JSON.stringify(encryptedBackup);
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = error as Error;
       await AuthService.logSecurityEvent('backup_failed', {
-        error: error.message,
+        error: err.message || 'Unknown error',
       });
-      throw error;
+      throw err;
     }
   }
 }
